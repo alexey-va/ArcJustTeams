@@ -5,7 +5,7 @@ api-version: '1.21.11'
 authors: [RusCrafting]
 description: Native team hub and Lands/EliteMobs bridge
 depend: [justTeams]
-softdepend: [Lands, EliteMobs]
+softdepend: [ARC, Lands, EliteMobs]
 commands:
   clans:
     description: Open the team hub
