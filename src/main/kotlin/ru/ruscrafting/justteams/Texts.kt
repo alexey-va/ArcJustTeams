@@ -1,27 +1,28 @@
 package ru.ruscrafting.justteams
 
 import net.kyori.adventure.text.Component
-import net.kyori.adventure.text.minimessage.MiniMessage
-import org.bukkit.configuration.file.YamlConfiguration
+import net.kyori.adventure.text.format.TextDecoration
 import org.bukkit.entity.Player
 import org.bukkit.plugin.java.JavaPlugin
-import java.io.File
+import ru.arc.config.ConfigManager
+import ru.arc.text.ConfigLocaleCatalog
+import ru.arc.text.LocalizedMiniMessage
 
 internal class Texts(private val plugin: JavaPlugin) {
-    private val mini = MiniMessage.miniMessage()
-    private val locales = mapOf("ru" to load("ru"), "en" to load("en"))
+    private val renderer: LocalizedMiniMessage
 
-    fun get(player: Player, key: String, values: Map<String, Any> = emptyMap()): Component {
-        val locale = if (player.locale().language.equals("ru", ignoreCase = true)) "ru" else "en"
-        var source = locales.getValue(locale).getString(key) ?: locales.getValue("ru").getString(key) ?: key
-        values.forEach { (name, value) -> source = source.replace("{$name}", value.toString()) }
-        return mini.deserialize(source)
+    init {
+        val catalogs = listOf("ru", "en").associateWith { locale ->
+            val path = "lang/$locale.yml"
+            if (!plugin.dataFolder.resolve(path).exists()) plugin.saveResource(path, false)
+            ConfigLocaleCatalog(ConfigManager.of(plugin.dataFolder.toPath(), path))
+        }
+        renderer = LocalizedMiniMessage(catalogs, defaultLocale = { "ru" })
     }
 
-    private fun load(locale: String): YamlConfiguration {
-        val path = "lang/$locale.yml"
-        val file = File(plugin.dataFolder, path)
-        if (!file.exists()) plugin.saveResource(path, false)
-        return YamlConfiguration.loadConfiguration(file)
+    fun get(player: Player, key: String, values: Map<String, Any> = emptyMap()): Component {
+        val components = values.mapValues { (_, value) -> renderer.literal(value) }
+        return renderer.render(key, player.locale().toLanguageTag(), components)
+            .decoration(TextDecoration.ITALIC, false)
     }
 }

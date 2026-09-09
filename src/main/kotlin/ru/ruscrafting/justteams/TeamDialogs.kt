@@ -8,29 +8,36 @@ import ru.arc.paper.menu.PaperDialogBody
 import ru.arc.paper.menu.PaperDialogButton
 import ru.arc.paper.menu.PaperDialogRuntime
 import ru.arc.paper.menu.PaperDialogScreen
+import ru.arc.paper.menu.DialogTables
+import ru.arc.paper.menu.DialogTextLayout
 
 internal class TeamDialogs(
     private val runtime: PaperDialogRuntime,
     private val texts: Texts,
     private val teams: JustTeamsGateway,
-    private val lands: LandsBridge,
+    private val lands: LandsBridge?,
     private val minimumDungeonMembers: Int,
 ) {
+    fun begin(player: Player) {
+        runtime.beginFlow(player)
+        open(player)
+    }
+
     fun open(player: Player, notice: String? = null) {
         val team = teams.team(player.uniqueId)
         if (team == null) return show(player, PaperDialogScreen(
             id = "arcjustteams.empty",
             title = texts.get(player, "title"),
-            body = listOfNotNull(notice?.let { PaperDialogBody(texts.get(player, it), 468) }, PaperDialogBody(texts.get(player, "no-team"), 468)),
+            body = listOfNotNull(notice?.let { DialogTextLayout.modelBody(texts.get(player, it)) }, DialogTextLayout.modelBody(texts.get(player, "no-team"))),
             buttons = listOf(
-                native(player, null, "buttons.create"),
-                native(player, "top", "buttons.browse"),
+                native(player, null, "buttons.create", "buttons.create-tooltip"),
+                native(player, "top", "buttons.browse", "buttons.browse-tooltip"),
             ),
             exitButton = close(player),
             columns = 2,
         ))
 
-        val landName = lands.name(team.landId)?.let { Component.text(it, NamedTextColor.WHITE) }
+        val landName = lands?.name(team.landId)?.let { Component.text(it, NamedTextColor.WHITE) }
             ?: texts.get(player, "summary.none")
         val rows = listOf(
             texts.get(player, "summary.name") to Component.text("[${team.tag}] ${team.name}", NamedTextColor.WHITE),
@@ -43,16 +50,16 @@ internal class TeamDialogs(
         show(player, PaperDialogScreen(
             id = "arcjustteams.root",
             title = texts.get(player, "title"),
-            body = listOfNotNull(notice?.let { PaperDialogBody(texts.get(player, it), 468) }, PaperDialogBody(texts.get(player, "intro"), 468), DialogTables.body(rows)),
+            body = listOfNotNull(notice?.let { DialogTextLayout.modelBody(texts.get(player, it)) }, DialogTextLayout.modelBody(texts.get(player, "intro")), DialogTables.body(rows)),
             buttons = listOf(
-                button("members", player, "buttons.members") { openMembers(player) },
-                native(player, "quests", "buttons.quests"),
-                button("upgrades", player, "buttons.upgrades") { openUpgrades(player) },
-                native(player, "buffs", "buttons.buffs"),
-                button("land", player, "buttons.land") { openLands(player) },
-                button("dungeons", player, "buttons.dungeons") { openDungeons(player) },
-                native(player, "settings", "buttons.social"),
-                native(player, null, "buttons.native"),
+                button("members", player, "buttons.members", tooltipKey = "buttons.members-tooltip") { openMembers(player) },
+                native(player, "quests", "buttons.quests", "buttons.quests-tooltip"),
+                button("upgrades", player, "buttons.upgrades", tooltipKey = "buttons.upgrades-tooltip") { openUpgrades(player) },
+                native(player, "buffs", "buttons.buffs", "buttons.buffs-tooltip"),
+                button("land", player, "buttons.land", tooltipKey = "buttons.land-tooltip") { openLands(player) },
+                button("dungeons", player, "buttons.dungeons", tooltipKey = "buttons.dungeons-tooltip") { openDungeons(player) },
+                native(player, "settings", "buttons.social", "buttons.social-tooltip"),
+                native(player, null, "buttons.native", "buttons.native-tooltip"),
             ),
             exitButton = close(player),
             columns = 2,
@@ -70,23 +77,23 @@ internal class TeamDialogs(
                 texts.get(player, "members.roles.${member.role}")
         }
         val buttons = buildList {
-            add(native(player, null, "members.manage"))
+            add(native(player, null, "members.manage", "members.manage-tooltip"))
             if (pages > 1) {
-                add(button("members_previous", player, "members.previous") { openMembers(player, page - 1) })
-                add(button("members_next", player, "members.next") { openMembers(player, page + 1) })
+                if (page > 0) add(button("members_previous", player, "members.previous") { openMembers(player, page - 1) })
+                if (page < pages - 1) add(button("members_next", player, "members.next") { openMembers(player, page + 1) })
             }
         }
         show(player, PaperDialogScreen(
             id = "arcjustteams.members",
             title = texts.get(player, "members.title"),
-            body = listOf(PaperDialogBody(texts.get(player, "members.intro", mapOf("page" to page + 1, "pages" to pages)), 468), DialogTables.body(rows)),
+            body = listOf(DialogTextLayout.modelBody(texts.get(player, "members.intro", mapOf("page" to page + 1, "pages" to pages))), DialogTables.body(rows)),
             buttons = buttons,
-            exitButton = back(player),
+            exitButton = footer(player),
             columns = 2,
         ))
     }
 
-    private fun openUpgrades(player: Player) {
+    private fun openUpgrades(player: Player, notice: String? = null) {
         val team = teams.team(player.uniqueId) ?: return open(player)
         val upgrade = teams.upgrade(team.raw)
         val rows = buildList {
@@ -104,9 +111,9 @@ internal class TeamDialogs(
         show(player, PaperDialogScreen(
             id = "arcjustteams.upgrades",
             title = texts.get(player, "upgrades.title"),
-            body = listOf(PaperDialogBody(texts.get(player, if (upgrade.nextTier == null) "upgrades.maximum" else "upgrades.intro"), 468), DialogTables.body(rows)),
+            body = listOfNotNull(notice?.let { DialogTextLayout.modelBody(texts.get(player, it)) }, DialogTextLayout.modelBody(texts.get(player, if (upgrade.nextTier == null) "upgrades.maximum" else "upgrades.intro")), DialogTables.body(rows)),
             buttons = buttons,
-            exitButton = back(player),
+            exitButton = footer(player),
             columns = 1,
         ))
     }
@@ -116,33 +123,49 @@ internal class TeamDialogs(
             id = "arcjustteams.upgrades.confirm",
             title = texts.get(player, "upgrades.confirm-title"),
             body = listOf(
-                PaperDialogBody(texts.get(player, "upgrades.confirm", mapOf("tier" to upgrade.nextTier.orEmpty(), "cost" to upgrade.cost.orEmpty())), 468),
+                DialogTextLayout.modelBody(texts.get(player, "upgrades.confirm", mapOf("tier" to upgrade.nextTier.orEmpty(), "cost" to upgrade.cost.orEmpty()))),
             ),
             buttons = listOf(button("upgrade_buy", player, "upgrades.buy") {
-                if (teams.team(player.uniqueId)?.id == team.id) teams.tryUpgrade(player)
-                open(player)
+                val freshTeam = teams.team(player.uniqueId)
+                val freshUpgrade = freshTeam?.takeIf { it.id == team.id }?.let { teams.upgrade(it.raw) }
+                if (freshUpgrade == null || freshUpgrade.currentTier != upgrade.currentTier || freshUpgrade.nextTier != upgrade.nextTier || freshUpgrade.cost != upgrade.cost) {
+                    openUpgrades(player, "upgrades.changed")
+                } else {
+                    teams.tryUpgrade(player)
+                    open(player)
+                }
             }),
-            exitButton = backTo(player, "upgrades.back") { openUpgrades(player) },
+            exitButton = footer(player),
             columns = 1,
         ))
     }
 
-    private fun openLands(player: Player) {
+    private fun openLands(player: Player, notice: String? = null) {
         val team = teams.team(player.uniqueId) ?: return open(player)
-        if (team.ownerId != player.uniqueId) {
-            open(player, "land.forbidden")
-            return
-        }
-        val owned = lands.ownedLands(player)
+        val owned = lands?.ownedLands(player).orEmpty()
         val body = buildList {
-            add(PaperDialogBody(texts.get(player, "land.intro"), 468))
-            if (owned.isEmpty()) add(PaperDialogBody(texts.get(player, if (lands.available()) "land.empty" else "notice.integration-missing"), 468))
+            add(DialogTextLayout.modelBody(texts.get(player, "land.intro")))
+            notice?.let { add(DialogTextLayout.modelBody(texts.get(player, it))) }
+            if (team.ownerId != player.uniqueId) add(DialogTextLayout.modelBody(texts.get(player, "land.forbidden")))
+            else if (owned.isEmpty()) add(DialogTextLayout.modelBody(texts.get(player, if (lands == null) "notice.integration-missing" else "land.empty")))
+            owned.firstOrNull { it.id == team.landId }?.let { selected ->
+                add(DialogTables.body(listOf(
+                    texts.get(player, "land.name") to Component.text(selected.name),
+                    texts.get(player, "land.chunks") to Component.text("${selected.chunks}/${selected.maxChunks}"),
+                ), frame = DialogTables.Frame.LEGENDARY))
+            }
         }
-        val buttons = owned.mapIndexed { index, land ->
+        val buttons = if (team.ownerId != player.uniqueId) emptyList() else owned.mapIndexed { index, land ->
             val selected = land.id == team.landId
-            button("land_$index", player, if (selected) "buttons.bound" else "buttons.bind", mapOf("land" to land.name)) {
-                teams.bindLand(team.raw, land.id)
-                open(player, "notice.bound")
+            if (selected) button("land_$index", player, "buttons.bound", mapOf("land" to land.name)) {}
+            else button("land_$index", player, "buttons.bind", mapOf("land" to land.name), "buttons.bind-tooltip") {
+                val fresh = teams.team(player.uniqueId)
+                val stillOwned = lands?.ownedLands(player)?.any { it.id == land.id } == true
+                if (fresh?.id != team.id || fresh.ownerId != player.uniqueId || !stillOwned) openLands(player, "land.changed")
+                else {
+                    teams.bindLand(fresh.raw, land.id)
+                    openLands(player, "notice.bound")
+                }
             }
         }
         show(player, PaperDialogScreen(
@@ -150,46 +173,53 @@ internal class TeamDialogs(
             title = texts.get(player, "land.title"),
             body = body,
             buttons = buttons,
-            exitButton = back(player),
+            exitButton = footer(player),
             columns = 2,
         ))
     }
 
     private fun openDungeons(player: Player) {
+        val team = teams.team(player.uniqueId) ?: return open(player)
         show(player, PaperDialogScreen(
             id = "arcjustteams.dungeons",
             title = texts.get(player, "dungeons.title"),
-            body = listOf(PaperDialogBody(texts.get(player, "dungeons.body", mapOf("minimum" to minimumDungeonMembers)), 468)),
-            buttons = listOf(button("open_dungeons", player, "dungeons.open", close = true) { player.performCommand("dungeon") }),
-            exitButton = back(player),
+            body = listOf(
+                DialogTextLayout.modelBody(texts.get(player, "dungeons.body", mapOf("minimum" to minimumDungeonMembers))),
+                DialogTables.body(listOf(
+                    texts.get(player, "summary.dungeons") to Component.text(team.dungeonRuns),
+                    texts.get(player, "dungeons.minimum") to Component.text(minimumDungeonMembers),
+                ), frame = DialogTables.Frame.ARTIFACT),
+            ),
+            buttons = listOf(button("open_dungeons", player, "dungeons.open", tooltipKey = "dungeons.open-tooltip", close = true) { player.performCommand("dungeon") }),
+            exitButton = footer(player),
             columns = 1,
         ))
     }
 
     private fun show(player: Player, screen: PaperDialogScreen) =
-        runtime.open(player, screen, { open(player) }, {}, true)
+        runtime.open(player, screen, null, {}, false)
 
-    private fun native(player: Player, section: String?, key: String) =
-        button("native_${section ?: "root"}", player, key, close = true) { teams.openNative(player, section) }
+    private fun native(player: Player, section: String?, key: String, tooltipKey: String? = null) =
+        button("native_${section ?: "root"}", player, key, tooltipKey = tooltipKey, close = true) { teams.openNative(player, section) }
 
     private fun button(
         id: String,
         player: Player,
         key: String,
         values: Map<String, Any> = emptyMap(),
+        tooltipKey: String? = null,
         close: Boolean = false,
         action: () -> Unit,
     ) = PaperDialogButton(
         id = PaperDialogActionId.of(id),
         label = texts.get(player, key, values),
-        tooltip = Component.empty(),
+        tooltip = tooltipKey?.let { texts.get(player, it, values) } ?: Component.empty(),
         width = 230,
         closeDialogBeforeAction = close,
         onClick = { action() },
     )
 
-    private fun back(player: Player) = button("back", player, "buttons.back") { open(player) }.copy(width = 200)
-    private fun backTo(player: Player, id: String, action: () -> Unit) = button(id, player, "buttons.back", action = action).copy(width = 200)
+    private fun footer(player: Player) = button("back", player, "buttons.back") {}.copy(width = 200)
     private fun close(player: Player) = button("close", player, "buttons.close", close = true) {}.copy(width = 200)
 }
 

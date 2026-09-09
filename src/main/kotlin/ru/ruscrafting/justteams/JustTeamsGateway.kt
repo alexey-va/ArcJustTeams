@@ -4,6 +4,8 @@ import org.bukkit.Bukkit
 import org.bukkit.entity.Player
 import java.util.Optional
 import java.util.UUID
+import java.lang.reflect.Method
+import java.util.concurrent.ConcurrentHashMap
 
 internal data class TeamSnapshot(
     val raw: Any,
@@ -105,10 +107,13 @@ internal class JustTeamsGateway(private val eliteQuestId: String) {
         ((team.call("getCustomData", key) as? Optional<*>)?.orElse(null) as? String)
 
     private fun Any.call(name: String, vararg args: Any): Any? {
-        val method = javaClass.methods.firstOrNull { candidate ->
-            candidate.name == name && candidate.parameterCount == args.size &&
-                candidate.parameterTypes.zip(args).all { (type, value) -> type.boxed().isInstance(value) }
-        } ?: error("Unsupported justTeams 2.6.7 method: ${javaClass.name}#$name/${args.size}")
+        val key = MethodKey(javaClass, name, args.map { it.javaClass })
+        val method = methods.computeIfAbsent(key) {
+            javaClass.methods.firstOrNull { candidate ->
+                candidate.name == name && candidate.parameterCount == args.size &&
+                    candidate.parameterTypes.zip(args).all { (type, value) -> type.boxed().isInstance(value) }
+            } ?: error("Unsupported justTeams 2.6.7 method: ${javaClass.name}#$name/${args.size}")
+        }
         return method.invoke(this, *args)
     }
 
@@ -121,6 +126,8 @@ internal class JustTeamsGateway(private val eliteQuestId: String) {
     }
 
     companion object {
+        private data class MethodKey(val owner: Class<*>, val name: String, val arguments: List<Class<*>>)
+        private val methods = ConcurrentHashMap<MethodKey, Method>()
         const val LAND_ID = "arcjustteams.land_id"
         const val DUNGEON_RUNS = "arcjustteams.dungeons_completed"
     }

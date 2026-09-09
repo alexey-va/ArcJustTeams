@@ -9,34 +9,64 @@ import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
 import org.bukkit.event.player.PlayerCommandPreprocessEvent
 import org.bukkit.plugin.java.JavaPlugin
+import ru.arc.config.EmptyConfig
+import ru.arc.core.PaperArcRuntime
+import ru.arc.core.Tasks
+import ru.arc.logging.ArcLogging
+import ru.arc.logging.LoggingConfigSource
+import ru.arc.logging.paper.PaperLoggingPlatform
+import ru.arc.observability.RuntimeHealthContribution
+import ru.arc.observability.RuntimeHealthState
 import ru.arc.paper.menu.PaperDialogRuntime
+import ru.arc.paper.runtime.PaperPluginRuntime
 
 class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
     private lateinit var dialogs: TeamDialogs
-    private lateinit var dialogRuntime: PaperDialogRuntime
+    private var pluginRuntime: PaperPluginRuntime? = null
 
     override fun onEnable() {
         saveDefaultConfig()
+        PaperArcRuntime.installScheduling(this)
+        ArcLogging.install(PaperLoggingPlatform("ArcJustTeams", name), LoggingConfigSource { EmptyConfig })
+        val lifecycle = PaperPluginRuntime(this, "arc-just-teams").also {
+            pluginRuntime = it
+            it.start("version" to pluginMeta.version)
+        }
         val teams = JustTeamsGateway(config.getString("elite-mobs.quest-id").orEmpty())
         val minimum = config.getInt("elite-mobs.minimum-team-members", 2).coerceAtLeast(2)
-        dialogRuntime = PaperDialogRuntime(this)
-        dialogs = TeamDialogs(dialogRuntime, Texts(this), teams, LandsBridge(this), minimum)
+        val dialogRuntime = lifecycle.own(PaperDialogRuntime(this))
+        val lands = if (server.pluginManager.isPluginEnabled("Lands")) LandsBridge(this) else null
+        dialogs = TeamDialogs(dialogRuntime, Texts(this), teams, lands, minimum)
         server.pluginManager.registerEvents(this, this)
         if (config.getBoolean("elite-mobs.enabled", true) && server.pluginManager.isPluginEnabled("EliteMobs")) {
             server.pluginManager.registerEvents(TeamDungeonTracker(teams, minimum), this)
         }
         getCommand("clans")?.setExecutor(this)
+        lifecycle.registerHealth("integrations") {
+            RuntimeHealthContribution(
+                state = RuntimeHealthState.UP,
+                dependencies = mapOf(
+                    "justTeams" to server.pluginManager.isPluginEnabled("justTeams"),
+                    "Lands" to server.pluginManager.isPluginEnabled("Lands"),
+                    "EliteMobs" to server.pluginManager.isPluginEnabled("EliteMobs"),
+                ),
+            )
+        }
+        lifecycle.ready("lands" to (lands != null))
+        lifecycle.reportHealthEvery(20L * 60L * 5L)
         logger.info("Native team hub enabled; Lands=${server.pluginManager.isPluginEnabled("Lands")}, EliteMobs=${server.pluginManager.isPluginEnabled("EliteMobs")}")
     }
 
     override fun onDisable() {
-        if (::dialogRuntime.isInitialized) dialogRuntime.close()
+        runCatching { pluginRuntime?.close() }
+        pluginRuntime = null
+        Tasks.reset()
     }
 
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
         val player = sender as? Player ?: return true
         if (!player.hasPermission("arcjustteams.use")) return true
-        dialogs.open(player)
+        dialogs.begin(player)
         return true
     }
 
@@ -47,6 +77,6 @@ class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
         if (command !in setOf("/team", "/clan", "/guild")) return
         if (!event.player.hasPermission("arcjustteams.use")) return
         event.isCancelled = true
-        dialogs.open(event.player)
+        dialogs.begin(event.player)
     }
 }
