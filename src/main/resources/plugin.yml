@@ -1,0 +1,16 @@
+name: ArcJustTeams
+version: '${version}'
+main: ru.ruscrafting.justteams.ArcJustTeamsPlugin
+api-version: '1.21.11'
+authors: [RusCrafting]
+description: Native team hub and Lands/EliteMobs bridge
+depend: [justTeams]
+softdepend: [ARC, Lands, EliteMobs]
+commands:
+  clans:
+    description: Open the team hub
+    aliases: [clanmenu]
+    usage: /clans
+permissions:
+  arcjustteams.use:
+    default: true

@@ -1,0 +1,5 @@
+replace-empty-team-command: true
+elite-mobs:
+  enabled: true
+  minimum-team-members: 2
+  quest-id: ''
