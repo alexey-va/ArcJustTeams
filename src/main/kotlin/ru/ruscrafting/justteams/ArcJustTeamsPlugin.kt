@@ -41,9 +41,6 @@ class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
         val landReconciler = lands?.let { TeamLandReconciler(teams, it, tasks, logger) }
         lateinit var activeDialogs: TeamDialogs
         val eliteMobsParty = EliteMobsPartyBridge.load()
-        if (server.pluginManager.isPluginEnabled("EliteMobs") && eliteMobsParty == null) {
-            logger.warning("EliteMobs party API is unavailable on this backend; dungeon party arrivals will be rejected")
-        }
         val dungeonParties = lifecycle.own(DungeonPartyCoordinator(
             plugin = this,
             teams = teams,
