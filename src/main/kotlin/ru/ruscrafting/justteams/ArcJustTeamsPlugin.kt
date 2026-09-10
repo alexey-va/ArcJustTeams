@@ -53,9 +53,9 @@ class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
             RuntimeHealthContribution(
                 state = RuntimeHealthState.UP,
                 dependencies = mapOf(
-                    "justTeams" to server.pluginManager.isPluginEnabled("justTeams"),
-                    "Lands" to server.pluginManager.isPluginEnabled("Lands"),
-                    "EliteMobs" to server.pluginManager.isPluginEnabled("EliteMobs"),
+                    "justteams" to server.pluginManager.isPluginEnabled("justTeams"),
+                    "lands" to server.pluginManager.isPluginEnabled("Lands"),
+                    "elitemobs" to server.pluginManager.isPluginEnabled("EliteMobs"),
                 ),
             )
         }
