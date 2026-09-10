@@ -16,5 +16,6 @@ class NativeFlowArchitectureTest {
         assertFalse("performCommand(" in source)
         assertFalse("openNative(" in source)
         assertFalse("org.bukkit.inventory" in source)
+        assertFalse(Regex("Class\\.forName\\(\"ru\\.arc").containsMatchIn(source))
     }
 }

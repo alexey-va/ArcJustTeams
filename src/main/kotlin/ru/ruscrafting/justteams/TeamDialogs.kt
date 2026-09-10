@@ -25,6 +25,7 @@ internal class TeamDialogs(
     private val landReconciler: TeamLandReconciler?,
     private val tasks: LifecycleTaskScope,
     private val minimumDungeonMembers: Int,
+    private val dungeonParties: DungeonPartyCoordinator,
 ) {
     private val numbers = DecimalFormat("#,##0.##")
 
@@ -322,17 +323,43 @@ internal class TeamDialogs(
         else openLands(player, "notice.bind-failed")
     }
 
-    private fun openDungeons(player: Player) {
+    private fun openDungeons(player: Player, notice: String? = null, noticeValues: Map<String, Any> = emptyMap()) {
         val team = teams.team(player.uniqueId) ?: return open(player)
         show(player, PaperDialogScreen(
             id = "arcjustteams.dungeons", title = texts.get(player, "dungeons.title"),
-            body = listOf(DialogTextLayout.modelBody(texts.get(player, "dungeons.body", mapOf("minimum" to minimumDungeonMembers))),
+            body = listOfNotNull(notice?.let { DialogTextLayout.modelBody(texts.get(player, it, noticeValues)) },
+                DialogTextLayout.modelBody(texts.get(player, "dungeons.body", mapOf("minimum" to minimumDungeonMembers))),
                 DialogTables.body(listOf(
                     texts.get(player, "summary.dungeons") to value(team.dungeonRuns),
                     texts.get(player, "dungeons.minimum") to value(minimumDungeonMembers),
+                    texts.get(player, "dungeons.destination") to texts.get(player, "dungeons.spawn"),
                 ), frame = DialogTables.Frame.ARTIFACT, width = 300)),
-            buttons = emptyList(), exitButton = footer(player), columns = 1,
+            buttons = listOf(if (teams.elevated(team, player.uniqueId)) {
+                button("gather", player, "dungeons.gather", "dungeons.gather-tooltip") {
+                    val fresh = teams.team(player.uniqueId)
+                    when {
+                        fresh?.id != team.id -> open(player, "members.changed")
+                        !teams.elevated(fresh, player.uniqueId) -> openDungeons(player)
+                        dungeonParties.gather(player, fresh) -> openDungeons(player, "dungeons.gathering")
+                        else -> openDungeons(player, "dungeons.unavailable")
+                    }
+                }
+            } else {
+                button("travel", player, "dungeons.travel", "dungeons.travel-tooltip") {
+                    if (dungeonParties.travel(player)) openDungeons(player, "dungeons.travelling")
+                    else openDungeons(player, "dungeons.unavailable")
+                }
+            }), exitButton = footer(player), columns = 1,
         ), reopen = { openDungeons(player) })
+    }
+
+    fun showDungeonPartyResult(player: Player, result: DungeonPartyResult) {
+        val notice = when {
+            result.unavailable -> "dungeons.unavailable"
+            result.skipped > 0 -> "dungeons.ready-partial"
+            else -> "dungeons.ready"
+        }
+        openDungeons(player, notice, mapOf("members" to result.readyMemberIds.size, "skipped" to result.skipped))
     }
 
     private fun openSettings(player: Player, notice: String? = null) {
