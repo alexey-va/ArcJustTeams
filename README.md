@@ -1,14 +1,14 @@
 # ArcJustTeams
 
-Addon for justTeams 2.6.7 on RusCrafting. It replaces only the empty `/team`, `/clan`, and `/guild` commands with a native Paper Dialog hub; all existing subcommands continue to be handled by justTeams.
+Addon for justTeams 2.6.7 on RusCrafting. Bare `/team`, `/clan`, `/guild`, and `/clans` open a native Paper Dialog flow; existing explicit subcommands remain available as technical routes.
 
 The hub adds:
 
-- team overview, member list, and a confirmed tier-upgrade flow;
-- an owner-selected link to a Lands settlement;
+- native creation, team catalog, member/invite/request management, settings, alliances, quests, buffs, and confirmed tier upgrades;
+- multiple shared Lands settlements: every team member may link only a settlement they own, and team members are added to every linked settlement without removing existing residents;
 - an EliteMobs group-run counter for teams;
-- safe hand-offs to the existing justTeams quest, buff, settings, and management screens.
+- no hand-off from the team flow to justTeams chest menus.
 
 EliteMobs tracking does not grant money, team points, or loot. Optional progress for an already configured justTeams custom quest can be enabled with `elite-mobs.quest-id` after an economy review.
 
-Build with `./gradlew check`. The shaded plugin is written to `build/libs/ArcJustTeams-0.1.0.jar`.
+Build with `../ArcGiveaways/gradlew check`. The shaded plugin is written to `build/libs/ArcJustTeams-0.2.0.jar`.

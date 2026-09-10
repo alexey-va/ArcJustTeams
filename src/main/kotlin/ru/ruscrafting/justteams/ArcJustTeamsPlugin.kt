@@ -10,6 +10,7 @@ import org.bukkit.event.Listener
 import org.bukkit.event.player.PlayerCommandPreprocessEvent
 import org.bukkit.plugin.java.JavaPlugin
 import ru.arc.config.EmptyConfig
+import ru.arc.core.LifecycleTaskScope
 import ru.arc.core.PaperArcRuntime
 import ru.arc.core.Tasks
 import ru.arc.logging.ArcLogging
@@ -36,8 +37,14 @@ class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
         val minimum = config.getInt("elite-mobs.minimum-team-members", 2).coerceAtLeast(2)
         val dialogRuntime = lifecycle.own(PaperDialogRuntime(this))
         val lands = if (server.pluginManager.isPluginEnabled("Lands")) LandsBridge(this) else null
-        dialogs = TeamDialogs(dialogRuntime, Texts(this), teams, lands, minimum)
+        val tasks = lifecycle.own(LifecycleTaskScope())
+        val landReconciler = lands?.let { TeamLandReconciler(teams, it, tasks, logger) }
+        dialogs = TeamDialogs(dialogRuntime, Texts(this), teams, lands, landReconciler, tasks, minimum)
         server.pluginManager.registerEvents(this, this)
+        landReconciler?.let {
+            server.pluginManager.registerEvents(it, this)
+            it.start()
+        }
         if (config.getBoolean("elite-mobs.enabled", true) && server.pluginManager.isPluginEnabled("EliteMobs")) {
             server.pluginManager.registerEvents(TeamDungeonTracker(teams, minimum), this)
         }
