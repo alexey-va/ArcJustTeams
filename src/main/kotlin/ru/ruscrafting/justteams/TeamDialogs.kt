@@ -132,7 +132,7 @@ internal class TeamDialogs(
         val listed = members.drop(page * 8).take(8)
         val rows = listed.map { member ->
             val state = if (member.online) "●" else "○"
-            Component.text("$state ${member.name}", if (member.online) NamedTextColor.GREEN else NamedTextColor.GRAY) to
+            Component.text("$state ${member.name}", if (member.online) NamedTextColor.GREEN else NamedTextColor.WHITE) to
                 texts.get(player, "members.roles.${member.role}")
         }
         val buttons = buildList {
