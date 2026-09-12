@@ -1,6 +1,7 @@
 title: '<white>Team</white>'
 intro: '<#e8dfd2>Your shared team hub: members, progression, settlements, and group runs.</#e8dfd2>'
 no-team: '<#e8dfd2>You are not in a team yet. Create one or browse the team catalog.</#e8dfd2>'
+pending: '<#e8dfd2>The operation is still running. Wait for the result or press Back.</#e8dfd2>'
 state:
   on: '<#9bd48d>enabled</#9bd48d>'
   off: '<white>disabled</white>'

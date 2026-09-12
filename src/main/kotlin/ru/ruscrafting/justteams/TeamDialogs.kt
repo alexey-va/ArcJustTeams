@@ -28,8 +28,10 @@ internal class TeamDialogs(
     private val dungeonParties: DungeonPartyCoordinator,
 ) {
     private val numbers = DecimalFormat("#,##0.##")
+    private val visitGenerations = mutableMapOf<UUID, DialogVisitGeneration>()
 
     fun begin(player: Player) {
+        visitGeneration(player).invalidate()
         runtime.beginFlow(player)
         open(player)
     }
@@ -78,27 +80,32 @@ internal class TeamDialogs(
         ), reopen = { openEmpty(player, null) })
     }
 
-    private fun openCreate(player: Player, notice: String? = null, name: String = "", tag: String = "") {
+    private fun openCreate(player: Player, notice: String? = null, initialName: String = "", initialTag: String = "", pending: Boolean = false) {
         show(player, PaperDialogScreen(
             id = "arcjustteams.create",
             title = texts.get(player, "creation.title"),
             body = listOfNotNull(noticeBody(player, notice), DialogTextLayout.modelBody(texts.get(player, "creation.intro"))),
             inputs = listOf(
-                PaperDialogTextInput(NAME_INPUT, texts.get(player, "creation.name"), name, 300, 16),
-                PaperDialogTextInput(TAG_INPUT, texts.get(player, "creation.tag"), tag, 300, 6),
+                PaperDialogTextInput(NAME_INPUT, texts.get(player, "creation.name"), initialName, 300, 16),
+                PaperDialogTextInput(TAG_INPUT, texts.get(player, "creation.tag"), initialTag, 300, 6),
             ),
             buttons = listOf(contextButton("create_submit", player, "creation.submit") { context ->
                 val submittedName = context.text(NAME_INPUT).orEmpty().trim()
                 val submittedTag = context.text(TAG_INPUT).orEmpty().trim()
                 val error = teams.create(player, submittedName, submittedTag)
                 if (error != null) openCreate(player, error, submittedName, submittedTag)
-                else tasks.runLater(20L) { open(player, if (teams.team(player.uniqueId) == null) "creation.failed" else "creation.created") }
+                else {
+                    openCreate(player, initialName = submittedName, initialTag = submittedTag, pending = true)
+                    runLaterOpen(player, 20L) {
+                        open(player, if (teams.team(player.uniqueId) == null) "creation.failed" else "creation.created")
+                    }
+                }
             }),
             exitButton = footer(player), columns = 1,
-        ))
+        ), pending = pending)
     }
 
-    private fun openBrowse(player: Player, requestedPage: Int = 0) {
+    private fun openBrowse(player: Player, requestedPage: Int = 0, pending: Boolean = false) {
         val all = teams.browseTeams()
         val pages = maxOf(1, (all.size + 7) / 8)
         val page = requestedPage.coerceIn(0, pages - 1)
@@ -111,7 +118,10 @@ internal class TeamDialogs(
             listed.forEachIndexed { index, team ->
                 add(button("join_$index", player, "browse.join", values = mapOf("team" to team.name)) {
                     teams.join(player, team.name)
-                    tasks.runLater(20L) { open(player, if (teams.team(player.uniqueId) == null) "browse.requested" else "browse.joined") }
+                    openBrowse(player, page, pending = true)
+                    runLaterOpen(player, 20L) {
+                        open(player, if (teams.team(player.uniqueId) == null) "browse.requested" else "browse.joined")
+                    }
                 })
             }
             paging(player, page, pages, { openBrowse(player, it) }, this)
@@ -121,7 +131,7 @@ internal class TeamDialogs(
             body = listOf(DialogTextLayout.modelBody(texts.get(player, if (listed.isEmpty()) "browse.empty" else "browse.intro",
                 mapOf("page" to page + 1, "pages" to pages))), DialogTables.body(rows, frame = DialogTables.Frame.EPIC, width = 320)),
             buttons = buttons, exitButton = footer(player), columns = 2,
-        ), reopen = { openBrowse(player, page) })
+        ), reopen = { openBrowse(player, page) }, pending = pending)
     }
 
     private fun openMembers(player: Player, requestedPage: Int = 0, notice: String? = null) {
@@ -228,11 +238,23 @@ internal class TeamDialogs(
         teams.kick(player, member.id); openMembers(player, notice = "members.changed")
     }
 
-    private fun openLeave(player: Player) = confirm(player, "arcjustteams.leave", "members.leave-title", "members.leave-body",
-        "members.leave-confirm") { teams.leave(player); tasks.runLater(10L) { open(player) } }
+    private fun openLeave(player: Player, pending: Boolean = false) {
+        confirm(player, "arcjustteams.leave", "members.leave-title", "members.leave-body",
+            "members.leave-confirm", pending = pending) {
+            teams.leave(player)
+            openLeave(player, pending = true)
+            runLaterOpen(player, 10L) { open(player) }
+        }
+    }
 
-    private fun openDisband(player: Player) = confirm(player, "arcjustteams.disband", "members.disband-title", "members.disband-body",
-        "members.disband-confirm") { teams.disband(player); tasks.runLater(10L) { open(player) } }
+    private fun openDisband(player: Player, pending: Boolean = false) {
+        confirm(player, "arcjustteams.disband", "members.disband-title", "members.disband-body",
+            "members.disband-confirm", pending = pending) {
+            teams.disband(player)
+            openDisband(player, pending = true)
+            runLaterOpen(player, 10L) { open(player) }
+        }
+    }
 
     private fun openUpgrades(player: Player, notice: String? = null) {
         val team = teams.team(player.uniqueId) ?: return open(player)
@@ -450,7 +472,7 @@ internal class TeamDialogs(
         ), reopen = { openAllies(player) })
     }
 
-    private fun openAddAlly(player: Player, notice: String? = null, initial: String = "") {
+    private fun openAddAlly(player: Player, notice: String? = null, initial: String = "", pending: Boolean = false) {
         show(player, PaperDialogScreen(
             id = "arcjustteams.allies.add", title = texts.get(player, "allies.add-title"),
             body = listOfNotNull(noticeBody(player, notice), DialogTextLayout.modelBody(texts.get(player, "allies.add-body"))),
@@ -458,27 +480,43 @@ internal class TeamDialogs(
             buttons = listOf(contextButton("send", player, "allies.send") { context ->
                 val name = context.text(TEAM_INPUT).orEmpty().trim()
                 if (teams.browseTeams().none { it.name.equals(name, true) }) openAddAlly(player, "allies.not-found", name)
-                else { teams.sendAllyRequest(player, name); tasks.runLater(10L) { openAllies(player, "allies.sent") } }
+                else {
+                    teams.sendAllyRequest(player, name)
+                    openAddAlly(player, initial = name, pending = true)
+                    runLaterOpen(player, 10L) { openAllies(player, "allies.sent") }
+                }
             }), exitButton = footer(player), columns = 1,
-        ))
+        ), pending = pending)
     }
 
-    private fun openAllyRequest(player: Player, id: Int) {
+    private fun openAllyRequest(player: Player, id: Int, pending: Boolean = false) {
         val name = teams.teamName(id)
         show(player, PaperDialogScreen(
             id = "arcjustteams.allies.request", title = texts.get(player, "allies.request-title"),
             body = listOf(DialogTextLayout.modelBody(texts.get(player, "allies.request-body", mapOf("team" to name)))),
             buttons = listOf(
-                button("accept", player, "allies.accept") { teams.acceptAllyRequest(player, id); tasks.runLater(10L) { openAllies(player, "allies.changed") } },
-                button("deny", player, "allies.deny") { teams.denyAllyRequest(player, id); tasks.runLater(10L) { openAllies(player, "allies.changed") } },
+                button("accept", player, "allies.accept") {
+                    teams.acceptAllyRequest(player, id)
+                    openAllyRequest(player, id, pending = true)
+                    runLaterOpen(player, 10L) { openAllies(player, "allies.changed") }
+                },
+                button("deny", player, "allies.deny") {
+                    teams.denyAllyRequest(player, id)
+                    openAllyRequest(player, id, pending = true)
+                    runLaterOpen(player, 10L) { openAllies(player, "allies.changed") }
+                },
             ), exitButton = footer(player), columns = 2,
-        ))
+        ), pending = pending)
     }
 
-    private fun openRemoveAlly(player: Player, id: Int) {
-        val name = teams.teamName(id)
+    private fun openRemoveAlly(player: Player, id: Int, knownName: String? = null, pending: Boolean = false) {
+        val name = knownName ?: teams.teamName(id)
         confirm(player, "arcjustteams.allies.remove", "allies.remove-title", "allies.remove-body", "allies.remove-confirm",
-            mapOf("team" to name)) { teams.removeAlly(player, name); tasks.runLater(10L) { openAllies(player, "allies.changed") } }
+            mapOf("team" to name), pending = pending) {
+                teams.removeAlly(player, name)
+                openRemoveAlly(player, id, name, pending = true)
+                runLaterOpen(player, 10L) { openAllies(player, "allies.changed") }
+            }
     }
 
     private fun openQuests(player: Player, requestedPage: Int = 0, notice: String? = null) {
@@ -554,16 +592,38 @@ internal class TeamDialogs(
         bodyKey: String,
         confirmKey: String,
         values: Map<String, Any> = emptyMap(),
+        pending: Boolean = false,
         action: () -> Unit,
     ) = show(player, PaperDialogScreen(
         id = id, title = texts.get(player, titleKey, values),
         body = listOf(DialogTextLayout.modelBody(texts.get(player, bodyKey, values))),
         buttons = listOf(button("confirm", player, confirmKey, values = values, action = action)),
         exitButton = footer(player), columns = 1,
-    ))
+    ), pending = pending)
 
-    private fun show(player: Player, screen: PaperDialogScreen, reopen: (() -> Unit)? = null) =
-        runtime.open(player, screen, reopen, {}, false)
+    private fun show(player: Player, screen: PaperDialogScreen, reopen: (() -> Unit)? = null, pending: Boolean = false) {
+        val generation = visitGeneration(player)
+        generation.advance()
+        val presented = if (pending) screen.copy(
+            body = screen.body + DialogTextLayout.modelBody(texts.get(player, "pending")),
+            buttons = emptyList(),
+        ) else screen
+        runtime.open(player, presented, reopen, {
+            generation.invalidate()
+            visitGenerations.remove(player.uniqueId, generation)
+        }, false)
+    }
+
+    private fun runLaterOpen(player: Player, delayTicks: Long, action: () -> Unit) {
+        val generation = visitGeneration(player)
+        val token = generation.current()
+        tasks.runLater(delayTicks) {
+            generation.ifCurrent(token, action)
+        }
+    }
+
+    private fun visitGeneration(player: Player): DialogVisitGeneration =
+        visitGenerations.getOrPut(player.uniqueId) { DialogVisitGeneration() }
 
     private fun button(
         id: String,

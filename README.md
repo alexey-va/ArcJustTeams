@@ -11,4 +11,7 @@ The hub adds:
 
 EliteMobs tracking does not grant money, team points, or loot. Optional progress for an already configured justTeams custom quest can be enabled with `elite-mobs.quest-id` after an economy review.
 
-Build with `../ArcGiveaways/gradlew check`. The shaded plugin is written to `build/libs/ArcJustTeams-0.2.0.jar`.
+Build with `../ArcGiveaways/gradlew check`. The 0.3.3 shaded plugin is written to
+`build/libs/ArcJustTeams-0.3.3.jar`. Delayed post-action refreshes are bound to
+the current native-dialog visit and are ignored after navigation or dismissal;
+ordinary internal transitions keep the dialog window open.
