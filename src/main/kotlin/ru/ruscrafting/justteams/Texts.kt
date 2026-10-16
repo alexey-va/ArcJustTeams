@@ -20,12 +20,15 @@ internal class Texts(private val plugin: JavaPlugin) {
             config.mergeMissingFromBundled(path)
             ConfigLocaleCatalog(config)
         }
-        renderer = LocalizedMiniMessage(catalogs, defaultLocale = { "ru" })
+        renderer = LocalizedMiniMessage(catalogs, defaultLocale = {
+            plugin.config.getString("locale.default", "ru") ?: "ru"
+        })
     }
 
     fun get(player: Player, key: String, values: Map<String, Any> = emptyMap()): Component {
         val components = values.mapValues { (_, value) -> renderer.literal(value) }
-        return renderer.render(key, player.locale().toLanguageTag(), components)
+        val locale = if (plugin.config.getBoolean("locale.use-client-locale", false)) player.locale().toLanguageTag() else null
+        return renderer.render(key, locale, components)
             .decoration(TextDecoration.ITALIC, false)
     }
 

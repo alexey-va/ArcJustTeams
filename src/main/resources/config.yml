@@ -1,3 +1,6 @@
+locale:
+  default: ru
+  use-client-locale: false
 replace-empty-team-command: true
 elite-mobs:
   enabled: true
