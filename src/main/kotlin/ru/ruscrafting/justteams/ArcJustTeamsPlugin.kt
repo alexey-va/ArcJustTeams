@@ -13,7 +13,6 @@ import ru.arc.config.EmptyConfig
 import ru.arc.core.LifecycleTaskScope
 import ru.arc.core.PaperArcRuntime
 import ru.arc.core.Tasks
-import ru.arc.core.whenCompleteSync
 import ru.arc.logging.ArcLogging
 import ru.arc.logging.LoggingConfigSource
 import ru.arc.logging.paper.PaperLoggingPlatform
@@ -24,19 +23,13 @@ import ru.arc.paper.runtime.PaperPluginRuntime
 import ru.arc.core.BoundedAsyncExecutor
 import ru.arc.core.BudgetedTaskQueue
 import ru.arc.core.BukkitTaskScheduler
-import java.util.concurrent.CompletableFuture
 
 open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
     private lateinit var dialogs: TeamDialogs
     private var pluginRuntime: PaperPluginRuntime? = null
-    private class StorageGeneration(val worker: BoundedAsyncExecutor) {
-        val drain = CompletableFuture<Unit>()
-        var nativeWork: BudgetedTaskQueue? = null
-    }
-    private var generation: StorageGeneration? = null
-    private var predecessor = CompletableFuture.completedFuture(Unit)
+    private var storage: BoundedAsyncExecutor? = null
+    private var nativeWork: BudgetedTaskQueue? = null
     private var ready = false
-    internal fun drained(): CompletableFuture<Unit> = (generation?.drain ?: predecessor).copy()
 
     override fun onEnable() {
         ready = false
@@ -44,28 +37,15 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
             pluginRuntime = it
             it.start("version" to pluginMeta.version)
         }
-        predecessor.whenCompleteSync(lifecycle.tasks) { _, failure ->
-            if (pluginRuntime !== lifecycle) return@whenCompleteSync
-            if (failure != null) failStartup(failure) else beginGeneration(lifecycle)
-        }
-    }
-
-    private fun beginGeneration(lifecycle: PaperPluginRuntime) {
         try {
             PaperArcRuntime.installScheduling(this)
             ArcLogging.install(PaperLoggingPlatform("ArcJustTeams", name), LoggingConfigSource { EmptyConfig })
-            val owner = StorageGeneration(BoundedAsyncExecutor("arc-just-teams"))
-            generation = owner
+            val worker = BoundedAsyncExecutor("arc-just-teams").also { storage = it }
+            saveDefaultConfig()
+            reloadConfig()
+            val texts = Texts(this)
             val tasks = lifecycle.own(LifecycleTaskScope(BukkitTaskScheduler(this)))
-            owner.worker.submit {
-                saveDefaultConfig()
-                reloadConfig()
-                Texts(this)
-            }.whenCompleteSync(tasks) { texts, failure ->
-                if (generation !== owner || pluginRuntime !== lifecycle) return@whenCompleteSync
-                if (failure != null || texts == null) failStartup(failure ?: IllegalStateException("Missing team configuration"))
-                else runCatching { finishEnable(lifecycle, owner, tasks, texts) }.onFailure(::failStartup)
-            }
+            finishEnable(lifecycle, worker, tasks, texts)
         } catch (failure: Throwable) { failStartup(failure) }
     }
 
@@ -74,9 +54,8 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
         server.pluginManager.disablePlugin(this)
     }
 
-    private fun finishEnable(lifecycle: PaperPluginRuntime, owner: StorageGeneration, tasks: LifecycleTaskScope, texts: Texts) {
-        val worker = owner.worker
-        val nativeWork = lifecycle.own(BudgetedTaskQueue(tasks)).also { owner.nativeWork = it }
+    private fun finishEnable(lifecycle: PaperPluginRuntime, worker: BoundedAsyncExecutor, tasks: LifecycleTaskScope, texts: Texts) {
+        val nativeWork = lifecycle.own(BudgetedTaskQueue(tasks)).also { this.nativeWork = it }
         val teams = JustTeamsGateway(config.getString("elite-mobs.quest-id").orEmpty(), nativeWork, worker,
             ru.arc.paper.player.PaperOfflinePlayerData.capture(server))
         val minimum = config.getInt("elite-mobs.minimum-team-members", 2).coerceAtLeast(2)
@@ -122,24 +101,20 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
 
     override fun onDisable() {
         ready = false
-        val owner = generation
-        generation = null
-        if (owner != null) predecessor = owner.drain
-        val lifecycle = pluginRuntime
-        pluginRuntime = null
-        var failure = runCatching { owner?.nativeWork?.close() }.exceptionOrNull()
-        try { lifecycle?.close() } catch (error: Throwable) {
-            if (failure == null) failure = error else if (failure !== error) failure.addSuppressed(error)
-        }
-        owner?.let {
-            val nativeFailure = failure
-            it.worker.closeAsync { nativeFailure?.let { error -> throw error } }.whenComplete { _, error ->
-                if (error == null) it.drain.complete(Unit) else {
-                    it.drain.completeExceptionally(error)
-                    logger.log(java.util.logging.Level.SEVERE, "Could not close ArcJustTeams generation", error)
-                }
+        val queue = nativeWork.also { nativeWork = null }
+        val runtime = pluginRuntime.also { pluginRuntime = null }
+        val worker = storage.also { storage = null }
+        var failure: Throwable? = null
+        fun attempt(close: () -> Unit) {
+            try { close() } catch (error: Throwable) {
+                if (failure == null) failure = error else if (failure !== error) failure.addSuppressed(error)
             }
         }
+        attempt { queue?.close() }
+        attempt { runtime?.close() }
+        // Only detached name/immutable-model work remains; no worker waits for Main.
+        attempt { worker?.closeAsync()?.join() }
+        failure?.let { logger.log(java.util.logging.Level.SEVERE, "Could not close ArcJustTeams", it) }
         Tasks.reset()
     }
 
