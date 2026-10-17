@@ -104,6 +104,8 @@ class DialogVisitGenerationRuntimeTest {
                 tasks = tasks,
                 minimumDungeonMembers = 2,
                 dungeonParties = mockk(relaxed = true),
+                nativeWork = ru.arc.core.BudgetedTaskQueue(tasks),
+                worker = mockk(relaxed = true),
             )
 
             fun click(id: String) {

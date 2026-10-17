@@ -7,6 +7,10 @@ import java.lang.reflect.Method
 import java.util.Optional
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Executor
+import ru.arc.core.BudgetedTaskQueue
+import ru.arc.paper.player.PaperOfflinePlayerData
 
 internal data class TeamSnapshot(
     val raw: Any,
@@ -33,7 +37,10 @@ internal data class TeamSnapshot(
     val activeBuffs: Set<String>,
 )
 
+internal data class TeamLandMembership(val raw: Any, val id: Int, val landIds: Set<String>, val memberIds: Set<UUID>)
+
 internal data class TeamMemberSnapshot(val id: UUID, val name: String, val role: String, val online: Boolean)
+internal data class TeamJoinRequestSnapshot(val id: UUID, val name: String)
 internal data class TeamBrowseSnapshot(val name: String, val tag: String, val members: Int, val public: Boolean)
 internal data class TeamUpgradeSnapshot(
     val enabled: Boolean,
@@ -63,12 +70,18 @@ internal data class TeamBuffSnapshot(val display: String, val active: Boolean, v
 internal enum class UpgradeAttempt { SUCCESS, DISABLED, NOT_OWNER, MAXIMUM, NOT_ENOUGH_MONEY, NOT_ENOUGH_POINTS, FAILED }
 
 /** Reflection is deliberate: justTeams 2.6.7 has no stable published API artifact. */
-internal class JustTeamsGateway(private val eliteQuestId: String) {
+internal class JustTeamsGateway(
+    private val eliteQuestId: String,
+    private val nativeWork: BudgetedTaskQueue,
+    private val worker: Executor,
+    private val offlineData: PaperOfflinePlayerData,
+) {
     private val justTeams: Any = requireNotNull(Bukkit.getPluginManager().getPlugin("justTeams"))
     private val teamManager: Any = justTeams.call("getTeamManager")!!
     private val upgradeManager: Any = justTeams.call("getTeamUpgradeManager")!!
     private val questManager: Any? = justTeams.call("getQuestManager")
     private val buffManager: Any? = justTeams.call("getTeamBuffManager")
+    private val logger = Bukkit.getLogger()
 
     fun team(playerId: UUID): TeamSnapshot? = teamManager.call("getPlayerTeamCached", playerId)?.let(::snapshot)
 
@@ -76,12 +89,20 @@ internal class JustTeamsGateway(private val eliteQuestId: String) {
 
     fun teamId(team: Any): Int = team.call("getId") as Int
 
-    fun allTeams(): List<TeamSnapshot> =
-        ((teamManager.call("getAllTeams") as? Collection<*>)?.filterNotNull().orEmpty()).map(::snapshot)
+    fun rawTeams(): List<Any> = (teamManager.call("getAllTeams") as? Collection<*>)?.filterNotNull().orEmpty()
 
-    fun browseTeams(): List<TeamBrowseSnapshot> = allTeams().map {
-        TeamBrowseSnapshot(it.name, it.tag, it.memberCount, it.public)
-    }.sortedWith(compareByDescending<TeamBrowseSnapshot> { it.public }.thenByDescending { it.members }.thenBy { it.name.lowercase() })
+    fun browseTeamsAsync(): CompletableFuture<List<TeamBrowseSnapshot>> {
+        val teams = rawTeams().iterator()
+        val captured = arrayListOf<TeamBrowseSnapshot>()
+        return nativeWork.submit({ true }) {
+            if (teams.hasNext()) {
+                val team = teams.next()
+                captured += TeamBrowseSnapshot(team.call("getPlainName") as String, team.call("getPlainTag") as String,
+                    (team.call("getMembers") as? Collection<*>)?.size ?: 0, team.call("isPublic") == true)
+            }
+            !teams.hasNext()
+        }.thenApplyAsync({ captured.sortedWith(compareByDescending<TeamBrowseSnapshot> { it.public }.thenByDescending { it.members }.thenBy { it.name.lowercase() }) }, worker)
+    }
 
     fun incrementDungeonRuns(team: Any) {
         val current = custom(team, DUNGEON_RUNS)?.toLongOrNull() ?: 0
@@ -104,19 +125,77 @@ internal class JustTeamsGateway(private val eliteQuestId: String) {
         return landId !in landIds(team)
     }
 
-    fun landLinkedElsewhere(teamId: Int, landId: String): Boolean =
-        allTeams().any { it.id != teamId && landId in it.landIds }
+    fun landLinkedElsewhere(teamId: Int, landId: String): CompletableFuture<Boolean> {
+        val teams = rawTeams().iterator()
+        var found = false
+        return nativeWork.submit({ true }) {
+            if (teams.hasNext()) {
+                val team = teams.next()
+                found = this.teamId(team) != teamId && landId in landIds(team)
+            }
+            found || !teams.hasNext()
+        }.thenApply { found }
+    }
 
-    fun members(team: Any): List<TeamMemberSnapshot> = rawMembers(team).map { member ->
-        val id = member.call("getPlayerUuid") as UUID
-        @Suppress("DEPRECATION")
-        TeamMemberSnapshot(
-            id = id,
-            name = Bukkit.getOfflinePlayer(id).name ?: id.toString().take(8),
-            role = (member.call("getRole") as Enum<*>).name.lowercase(),
-            online = member.call("isOnline") == true,
-        )
-    }.sortedWith(compareByDescending<TeamMemberSnapshot> { it.online }.thenBy { it.name.lowercase() })
+    fun landMembershipAsync(team: Any): CompletableFuture<TeamLandMembership> {
+        val id = teamId(team)
+        val lands = landIds(team)
+        val members = rawMembers(team).iterator()
+        val ids = linkedSetOf<UUID>()
+        return nativeWork.submit({ true }) {
+            if (members.hasNext()) { ids += members.next().call("getPlayerUuid") as UUID }
+            return@submit !members.hasNext()
+        }.thenApply { TeamLandMembership(team, id, lands, ids) }
+    }
+
+    fun mayTrust(membership: TeamLandMembership, landId: String, member: UUID): Boolean =
+        landId in landIds(membership.raw) && teamFor(member)?.let(::teamId) == membership.id
+
+    fun membersAsync(team: Any): CompletableFuture<List<TeamMemberSnapshot>> {
+        val pending = rawMembers(team).iterator()
+        val captured = mutableListOf<TeamMemberSnapshot>()
+        val cached = mutableSetOf<UUID>()
+        return nativeWork.submit({ true }) {
+            if (!pending.hasNext()) true else {
+                val member = pending.next()
+                val id = member.call("getPlayerUuid") as UUID
+                @Suppress("DEPRECATION")
+                val name = Bukkit.getOfflinePlayer(id).playerProfile.name?.takeIf(String::isNotEmpty)
+                if (name != null) cached += id
+                captured += TeamMemberSnapshot(id, name ?: id.toString().take(8),
+                    (member.call("getRole") as Enum<*>).name.lowercase(), member.call("isOnline") == true)
+                false
+            }
+        }.thenApplyAsync({
+            val persisted = offlineData.names(captured.asSequence().map { it.id }.filter { it !in cached }.asIterable())
+            reportNameFailures(persisted)
+            captured.map { member -> persisted.names[member.id]?.let { member.copy(name = it) } ?: member }
+                .sortedWith(compareByDescending<TeamMemberSnapshot> { it.online }.thenBy { it.name.lowercase() })
+        }, worker)
+    }
+
+    fun joinRequestsAsync(team: TeamSnapshot): CompletableFuture<List<TeamJoinRequestSnapshot>> {
+        val ids = joinRequests(team)
+        val pending = ids.iterator()
+        val cached = linkedMapOf<UUID, String>()
+        return nativeWork.submit({ true }) {
+            if (!pending.hasNext()) true else {
+                val id = pending.next()
+                @Suppress("DEPRECATION")
+                val name = Bukkit.getOfflinePlayer(id).playerProfile.name
+                name?.takeIf(String::isNotEmpty)?.let { cached[id] = it }
+                false
+            }
+        }.thenApplyAsync({
+            val persisted = offlineData.names(ids.filter { it !in cached })
+            reportNameFailures(persisted)
+            ids.map { id -> TeamJoinRequestSnapshot(id, cached[id] ?: persisted.names[id] ?: id.toString().take(8)) }
+        }, worker)
+    }
+
+    private fun reportNameFailures(names: PaperOfflinePlayerData.Names) {
+        if (names.failures.isNotEmpty()) logger.warning("Could not read ${names.failures.size} offline team player names; UUIDs remain available")
+    }
 
     fun joinRequests(team: TeamSnapshot): List<UUID> =
         (team.raw.call("getJoinRequests") as? Collection<*>)?.filterIsInstance<UUID>().orEmpty()
@@ -247,7 +326,7 @@ internal class JustTeamsGateway(private val eliteQuestId: String) {
         )
     }
 
-    private fun snapshot(team: Any): TeamSnapshot {
+    fun snapshot(team: Any): TeamSnapshot {
         val members = rawMembers(team)
         return TeamSnapshot(
             raw = team,

@@ -5,6 +5,7 @@ import org.bukkit.entity.Player
 import org.bukkit.plugin.Plugin
 import org.bukkit.plugin.messaging.PluginMessageListener
 import ru.arc.core.LifecycleTaskScope
+import ru.arc.core.whenCompleteSync
 import ru.arc.dungeonparty.DungeonPartyGatherArrival
 import ru.arc.dungeonparty.DungeonPartyGatherRequest
 import java.util.LinkedHashMap
@@ -25,6 +26,8 @@ internal class DungeonPartyCoordinator(
     private val logger: Logger,
     private val onResult: (Player, DungeonPartyResult) -> Unit,
 ) : PluginMessageListener, AutoCloseable {
+    private var closed = false
+    private val gathering = mutableSetOf<UUID>()
     private val completed = object : LinkedHashMap<UUID, Unit>(128, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<UUID, Unit>?): Boolean = size > 128
     }
@@ -35,15 +38,26 @@ internal class DungeonPartyCoordinator(
     }
 
     fun gather(leader: Player, team: TeamSnapshot): Boolean {
-        if (!leader.isOnline || leader.uniqueId !in team.memberIds) return false
-        val candidates = listOf(leader.uniqueId) + teams.members(team.raw)
-            .asSequence()
-            .map(TeamMemberSnapshot::id)
-            .filterNot(leader.uniqueId::equals)
-            .take(DungeonPartyGatherRequest.MAX_CANDIDATES - 1)
-            .toList()
-        val request = DungeonPartyGatherRequest(UUID.randomUUID(), leader.uniqueId, candidates)
-        leader.sendPluginMessage(plugin, DungeonPartyGatherRequest.CHANNEL, request.encode())
+        if (closed || !leader.isOnline || leader.uniqueId !in team.memberIds) return false
+        if (!gathering.add(leader.uniqueId)) return true
+        teams.membersAsync(team.raw).whenCompleteSync(tasks) { members, failure ->
+            gathering.remove(leader.uniqueId)
+            if (closed || !leader.isOnline) return@whenCompleteSync
+            val current = teams.team(leader.uniqueId)
+            if (failure != null || current?.id != team.id || leader.uniqueId !in current.memberIds) {
+                if (failure != null) logger.warning("Could not prepare dungeon party candidates: ${failure.message}")
+                onResult(leader, DungeonPartyResult(emptyList(), 0, unavailable = true))
+                return@whenCompleteSync
+            }
+            val candidates = listOf(leader.uniqueId) + members.orEmpty().asSequence()
+                .filter { it.id in current.memberIds }
+                .map(TeamMemberSnapshot::id)
+                .filterNot(leader.uniqueId::equals)
+                .take(DungeonPartyGatherRequest.MAX_CANDIDATES - 1)
+                .toList()
+            val request = DungeonPartyGatherRequest(UUID.randomUUID(), leader.uniqueId, candidates)
+            leader.sendPluginMessage(plugin, DungeonPartyGatherRequest.CHANNEL, request.encode())
+        }
         return true
     }
 
@@ -99,6 +113,8 @@ internal class DungeonPartyCoordinator(
     }
 
     override fun close() {
+        closed = true
+        gathering.clear()
         plugin.server.messenger.unregisterIncomingPluginChannel(plugin, DungeonPartyGatherArrival.CHANNEL, this)
         plugin.server.messenger.unregisterOutgoingPluginChannel(plugin, DungeonPartyGatherRequest.CHANNEL)
         synchronized(completed) { completed.clear() }

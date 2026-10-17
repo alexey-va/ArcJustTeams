@@ -5,6 +5,9 @@ import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
 import org.bukkit.entity.Player
 import ru.arc.core.LifecycleTaskScope
+import ru.arc.core.BudgetedTaskQueue
+import ru.arc.core.BoundedAsyncExecutor
+import ru.arc.core.whenCompleteSync
 import ru.arc.paper.menu.DialogTables
 import ru.arc.paper.menu.DialogTextLayout
 import ru.arc.paper.menu.PaperDialogActionId
@@ -26,9 +29,13 @@ internal class TeamDialogs(
     private val tasks: LifecycleTaskScope,
     private val minimumDungeonMembers: Int,
     private val dungeonParties: DungeonPartyCoordinator,
+    private val nativeWork: BudgetedTaskQueue,
+    private val worker: BoundedAsyncExecutor,
 ) {
     private val numbers = DecimalFormat("#,##0.##")
     private val visitGenerations = mutableMapOf<UUID, DialogVisitGeneration>()
+    private val landBindings = mutableSetOf<String>()
+    private var browseSnapshot = emptyList<TeamBrowseSnapshot>()
 
     fun begin(player: Player) {
         visitGeneration(player).invalidate()
@@ -106,10 +113,29 @@ internal class TeamDialogs(
     }
 
     private fun openBrowse(player: Player, requestedPage: Int = 0, pending: Boolean = false) {
-        val all = teams.browseTeams()
+        if (pending) return presentBrowse(player, requestedPage, true, browseSnapshot)
+        show(player, PaperDialogScreen(
+            id = "arcjustteams.browse", title = texts.get(player, "browse.title"),
+            body = emptyList(), buttons = emptyList(), exitButton = footer(player), columns = 2,
+        ), pending = true)
+        val generation = visitGeneration(player)
+        val token = generation.current()
+        teams.browseTeamsAsync().whenCompleteSync(tasks) { all, failure ->
+            if (!player.isOnline) return@whenCompleteSync
+            generation.ifCurrent(token) {
+                if (failure != null) open(player, "no-team")
+                else {
+                    browseSnapshot = all.orEmpty()
+                    presentBrowse(player, requestedPage, false, browseSnapshot)
+                }
+            }
+        }
+    }
+
+    private fun presentBrowse(player: Player, requestedPage: Int, pending: Boolean, all: List<TeamBrowseSnapshot>) {
         val pages = maxOf(1, (all.size + 7) / 8)
         val page = requestedPage.coerceIn(0, pages - 1)
-        val listed = all.drop(page * 8).take(8)
+        val listed = all.subList(page * 8, minOf(all.size, page * 8 + 8))
         val rows = listed.map { team ->
             value("[${team.tag}] ${team.name}") to texts.get(player, if (team.public) "browse.public" else "browse.private",
                 mapOf("members" to team.members))
@@ -136,10 +162,26 @@ internal class TeamDialogs(
 
     private fun openMembers(player: Player, requestedPage: Int = 0, notice: String? = null) {
         val team = teams.team(player.uniqueId) ?: return open(player)
-        val members = teams.members(team.raw)
+        show(player, PaperDialogScreen(
+            id = "arcjustteams.members", title = texts.get(player, "members.title"),
+            body = emptyList(), buttons = emptyList(), exitButton = footer(player), columns = 2,
+        ), pending = true)
+        val generation = visitGeneration(player)
+        val token = generation.current()
+        teams.membersAsync(team.raw).whenCompleteSync(tasks) { members, failure ->
+            if (!player.isOnline) return@whenCompleteSync
+            generation.ifCurrent(token) {
+                val current = teams.team(player.uniqueId)
+                if (failure != null || current?.id != team.id) open(player)
+                else presentMembers(player, current, members.orEmpty(), requestedPage, notice)
+            }
+        }
+    }
+
+    private fun presentMembers(player: Player, team: TeamSnapshot, members: List<TeamMemberSnapshot>, requestedPage: Int, notice: String?) {
         val pages = maxOf(1, (members.size + 7) / 8)
         val page = requestedPage.coerceIn(0, pages - 1)
-        val listed = members.drop(page * 8).take(8)
+        val listed = members.subList(page * 8, minOf(members.size, page * 8 + 8))
         val rows = listed.map { member ->
             val state = if (member.online) "●" else "○"
             Component.text("$state ${member.name}", if (member.online) NamedTextColor.GREEN else NamedTextColor.WHITE) to
@@ -148,7 +190,7 @@ internal class TeamDialogs(
         val buttons = buildList {
             listed.forEachIndexed { index, member ->
                 add(button("member_$index", player, "members.open", values = mapOf("player" to member.name)) {
-                    openMember(player, member.id)
+                    openMember(player, member.id, member.name)
                 })
             }
             if (teams.elevated(team, player.uniqueId)) {
@@ -167,9 +209,26 @@ internal class TeamDialogs(
         ), reopen = { openMembers(player, page) })
     }
 
-    private fun openMember(player: Player, memberId: UUID) {
+    private fun openMember(player: Player, memberId: UUID, previousName: String) {
         val team = teams.team(player.uniqueId) ?: return open(player)
-        val member = teams.members(team.raw).firstOrNull { it.id == memberId } ?: return openMembers(player)
+        show(player, PaperDialogScreen(
+            id = "arcjustteams.member", title = texts.get(player, "members.member-title", mapOf("player" to previousName)),
+            body = emptyList(), buttons = emptyList(), exitButton = footer(player), columns = 2,
+        ), pending = true)
+        val generation = visitGeneration(player)
+        val token = generation.current()
+        teams.membersAsync(team.raw).thenApplyAsync({ members -> members.firstOrNull { it.id == memberId } }, worker)
+            .whenCompleteSync(tasks) { member, failure ->
+                if (!player.isOnline) return@whenCompleteSync
+                generation.ifCurrent(token) {
+                    val current = teams.team(player.uniqueId)
+                    if (failure != null || current?.id != team.id || member == null) openMembers(player)
+                    else presentMember(player, current, member)
+                }
+            }
+    }
+
+    private fun presentMember(player: Player, team: TeamSnapshot, member: TeamMemberSnapshot) {
         val canEdit = member.id != player.uniqueId && teams.elevated(team, player.uniqueId) && member.role != "owner"
         val buttons = if (!canEdit) emptyList() else buildList {
             if (team.ownerId == player.uniqueId && member.role == "member") add(button("promote", player, "members.promote") {
@@ -187,7 +246,7 @@ internal class TeamDialogs(
                 texts.get(player, "members.role") to texts.get(player, "members.roles.${member.role}"),
                 texts.get(player, "members.status") to texts.get(player, if (member.online) "members.online" else "members.offline"),
             ), frame = DialogTables.Frame.EPIC, width = 300)), buttons = buttons, exitButton = footer(player), columns = 2,
-        ), reopen = { openMember(player, memberId) })
+        ), reopen = { openMember(player, member.id, member.name) })
     }
 
     private fun openInvite(player: Player, notice: String? = null, initial: String = "") {
@@ -197,7 +256,7 @@ internal class TeamDialogs(
             inputs = listOf(PaperDialogTextInput(PLAYER_INPUT, texts.get(player, "members.player-input"), initial, 300, 16)),
             buttons = listOf(contextButton("invite_submit", player, "members.invite-submit") { context ->
                 val name = context.text(PLAYER_INPUT).orEmpty().trim()
-                val target = Bukkit.getOnlinePlayers().firstOrNull { it.name.equals(name, true) }
+                val target = Bukkit.getPlayerExact(name)
                 if (target == null) openInvite(player, "members.player-offline", name)
                 else { teams.invite(player, target); openMembers(player, notice = "members.invited") }
             }), exitButton = footer(player), columns = 1,
@@ -206,29 +265,81 @@ internal class TeamDialogs(
 
     private fun openJoinRequests(player: Player) {
         val team = teams.team(player.uniqueId) ?: return open(player)
-        val requests = teams.joinRequests(team)
-        val buttons = requests.mapIndexed { index, id ->
-            @Suppress("DEPRECATION") val name = Bukkit.getOfflinePlayer(id).name ?: id.toString().take(8)
-            button("request_$index", player, "members.request", values = mapOf("player" to name)) { openJoinRequest(player, id, name) }
-        }
+        if (!teams.elevated(team, player.uniqueId)) return openMembers(player)
         show(player, PaperDialogScreen(
             id = "arcjustteams.requests", title = texts.get(player, "members.requests-title"),
-            body = listOf(DialogTextLayout.modelBody(texts.get(player, if (requests.isEmpty()) "members.requests-empty" else "members.requests-intro"))),
-            buttons = buttons, exitButton = footer(player), columns = 2,
-        ), reopen = { openJoinRequests(player) })
+            body = emptyList(), buttons = emptyList(), exitButton = footer(player), columns = 2,
+        ), pending = true)
+        val generation = visitGeneration(player)
+        val token = generation.current()
+        teams.joinRequestsAsync(team).whenCompleteSync(tasks) { requests, failure ->
+            if (!player.isOnline) return@whenCompleteSync
+            generation.ifCurrent(token) {
+                val current = teams.team(player.uniqueId)
+                if (failure != null || current?.id != team.id || !teams.elevated(current, player.uniqueId)) open(player)
+                else presentJoinRequests(player, current, requests.orEmpty(), generation, token)
+            }
+        }
     }
 
-    private fun openJoinRequest(player: Player, id: UUID, name: String) {
+    private fun presentJoinRequests(player: Player, team: TeamSnapshot, requests: List<TeamJoinRequestSnapshot>,
+        generation: DialogVisitGeneration, token: DialogVisitGeneration.Token) {
+        val teamId = team.id
+        val buttons = ArrayList<PaperDialogButton>()
+        val pending = requests.iterator()
+        val title = texts.get(player, "members.requests-title")
+        val body = listOf(DialogTextLayout.modelBody(texts.get(player,
+            if (requests.isEmpty()) "members.requests-empty" else "members.requests-intro")))
+        val footer = footer(player)
+        fun current(): Boolean = player.isOnline && generation.current() == token &&
+            teams.teamFor(player.uniqueId) === team.raw && teams.elevated(team, player.uniqueId)
+        nativeWork.submit(::current) {
+            if (!pending.hasNext()) true else {
+                val request = pending.next()
+                buttons += button("request_${buttons.size}", player, "members.request", values = mapOf("player" to request.name)) {
+                    openJoinRequest(player, teamId, request.id, request.name)
+                }
+                false
+            }
+        }.thenCompose {
+            // Model uniqueness validation is pure CPU; no player/native reads on this worker.
+            worker.submit { PaperDialogScreen(id = "arcjustteams.requests", title = title, body = body,
+                buttons = java.util.Collections.unmodifiableList(buttons), exitButton = footer, columns = 2) }
+        }.whenCompleteSync(tasks) { screen, failure ->
+            if (!player.isOnline) return@whenCompleteSync
+            generation.ifCurrent(token) {
+                if (failure != null || screen == null || !current()) { open(player); return@ifCurrent }
+                val binding = generation.advance()
+                runtime.openAsync(player, screen, nativeWork,
+                    isCurrent = { player.isOnline && generation.current() == binding &&
+                        teams.teamFor(player.uniqueId) === team.raw && teams.elevated(team, player.uniqueId) },
+                    reopen = { openJoinRequests(player) },
+                    onDismiss = {
+                        generation.invalidate()
+                        visitGenerations.remove(player.uniqueId, generation)
+                    },
+                ).whenCompleteSync(tasks) { _, bindingFailure ->
+                    if (bindingFailure != null && player.isOnline) generation.ifCurrent(binding) { open(player) }
+                }
+            }
+        }
+    }
+
+    private fun openJoinRequest(player: Player, teamId: Int, id: UUID, name: String) {
+        val team = teams.team(player.uniqueId)
+        if (team?.id != teamId || !teams.elevated(team, player.uniqueId)) return open(player)
+        fun update(accept: Boolean) {
+            val current = teams.team(player.uniqueId)
+            if (current?.id != teamId || !teams.elevated(current, player.uniqueId)) { open(player); return }
+            if (accept) teams.acceptJoinRequest(current, id) else teams.denyJoinRequest(current, id)
+            openJoinRequests(player)
+        }
         show(player, PaperDialogScreen(
             id = "arcjustteams.request", title = texts.get(player, "members.request-title"),
             body = listOf(DialogTextLayout.modelBody(texts.get(player, "members.request-body", mapOf("player" to name)))),
             buttons = listOf(
-                button("accept", player, "members.accept") {
-                    teams.team(player.uniqueId)?.let { teams.acceptJoinRequest(it, id) }; openJoinRequests(player)
-                },
-                button("deny", player, "members.deny") {
-                    teams.team(player.uniqueId)?.let { teams.denyJoinRequest(it, id) }; openJoinRequests(player)
-                },
+                button("accept", player, "members.accept") { update(true) },
+                button("deny", player, "members.deny") { update(false) },
             ), exitButton = footer(player), columns = 2,
         ))
     }
@@ -300,7 +411,7 @@ internal class TeamDialogs(
         ))
     }
 
-    private fun openLands(player: Player, notice: String? = null) {
+    private fun openLands(player: Player, notice: String? = null, pending: Boolean = false) {
         val team = teams.team(player.uniqueId) ?: return open(player)
         val linked = lands?.linked(team.landIds).orEmpty()
         val owned = lands?.ownedLands(player).orEmpty()
@@ -314,13 +425,8 @@ internal class TeamDialogs(
                 val fresh = teams.team(player.uniqueId)
                 when {
                     fresh?.id != team.id || lands?.ownedBy(land.id, player.uniqueId) != true -> openLands(player, "settlements.changed")
-                    teams.landLinkedElsewhere(team.id, land.id) -> openLands(player, "settlements.already-used")
-                    !teams.bindLand(fresh.raw, land.id) -> openLands(player, "notice.bind-failed")
-                    else -> {
-                        val updated = teams.team(player.uniqueId) ?: fresh
-                        val sync = landReconciler?.reconcile(updated) ?: LandSyncResult(0, 0)
-                        openLands(player, if (sync.failed > 0) "notice.bound-partial" else "notice.bound")
-                    }
+                    !landBindings.add(land.id) -> openLands(player, "settlements.changed")
+                    else -> linkLand(player, team, land)
                 }
             }
         }
@@ -334,7 +440,35 @@ internal class TeamDialogs(
                 else add(DialogTables.body(rows, frame = DialogTables.Frame.LEGENDARY, width = 320))
                 if (lands != null && owned.isEmpty()) add(DialogTextLayout.modelBody(texts.get(player, "settlements.empty")))
             }, buttons = buttons, exitButton = footer(player), columns = 2,
-        ), reopen = { openLands(player) })
+        ), reopen = { openLands(player) }, pending = pending)
+    }
+
+    private fun linkLand(player: Player, team: TeamSnapshot, land: TeamLand) {
+        openLands(player, pending = true)
+        val generation = visitGeneration(player)
+        val token = generation.current()
+        teams.landLinkedElsewhere(team.id, land.id).whenCompleteSync(tasks) { elsewhere, failure ->
+            landBindings.remove(land.id)
+            if (!player.isOnline) return@whenCompleteSync
+            generation.ifCurrent(token) {
+                val fresh = teams.team(player.uniqueId)
+                when {
+                    failure != null -> openLands(player, "notice.bind-failed")
+                    fresh?.id != team.id || lands?.ownedBy(land.id, player.uniqueId) != true -> openLands(player, "settlements.changed")
+                    elsewhere == true -> openLands(player, "settlements.already-used")
+                    !teams.bindLand(fresh.raw, land.id) -> openLands(player, "notice.bind-failed")
+                    else -> {
+                        val updated = teams.team(player.uniqueId) ?: fresh
+                        val sync = landReconciler?.reconcile(updated)
+                        if (sync == null) openLands(player, "notice.bound") else sync.whenCompleteSync(tasks) { result, syncFailure ->
+                            if (player.isOnline) generation.ifCurrent(token) {
+                                openLands(player, if (syncFailure != null || (result?.failed ?: 0) > 0) "notice.bound-partial" else "notice.bound")
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private fun openUnlinkLand(player: Player, land: TeamLand) = confirm(player, "arcjustteams.land.unlink", "settlements.unlink-title",
@@ -479,11 +613,22 @@ internal class TeamDialogs(
             inputs = listOf(PaperDialogTextInput(TEAM_INPUT, texts.get(player, "allies.team-input"), initial, 300, 16)),
             buttons = listOf(contextButton("send", player, "allies.send") { context ->
                 val name = context.text(TEAM_INPUT).orEmpty().trim()
-                if (teams.browseTeams().none { it.name.equals(name, true) }) openAddAlly(player, "allies.not-found", name)
-                else {
-                    teams.sendAllyRequest(player, name)
-                    openAddAlly(player, initial = name, pending = true)
-                    runLaterOpen(player, 10L) { openAllies(player, "allies.sent") }
+                val sourceTeam = teams.team(player.uniqueId) ?: return@contextButton open(player)
+                openAddAlly(player, initial = name, pending = true)
+                val generation = visitGeneration(player)
+                val token = generation.current()
+                teams.browseTeamsAsync().thenApplyAsync({ all -> all.any { it.name.equals(name, true) } }, worker)
+                    .whenCompleteSync(tasks) { found, failure ->
+                    if (player.isOnline) generation.ifCurrent(token) {
+                        val currentTeam = teams.team(player.uniqueId)
+                        if (currentTeam?.id != sourceTeam.id || !teams.elevated(currentTeam, player.uniqueId)) open(player)
+                        else if (failure != null || found != true) openAddAlly(player, "allies.not-found", name)
+                        else {
+                            teams.sendAllyRequest(player, name)
+                            openAddAlly(player, initial = name, pending = true)
+                            runLaterOpen(player, 10L) { openAllies(player, "allies.sent") }
+                        }
+                    }
                 }
             }), exitButton = footer(player), columns = 1,
         ), pending = pending)
