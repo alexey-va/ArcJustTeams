@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "ru.ruscrafting"
-version = "0.3.12"
+version = "0.3.13"
 description = "Native team hub and Lands/EliteMobs bridge for justTeams"
 
 repositories {
@@ -24,19 +24,19 @@ kotlin { jvmToolchain(25) }
 
 dependencies {
     implementation(kotlin("stdlib"))
-    implementation("ru.ruscrafting.arc:arc-core:2.7.30")
-    implementation("ru.ruscrafting.arc:arc-core-logging:2.7.30")
-    implementation("ru.ruscrafting.arc:arc-core-paper:2.7.30")
-    implementation("ru.ruscrafting.arc:arc-core-menu:2.7.30")
-    implementation("ru.ruscrafting.arc:arc-core-paper-menu:2.7.30")
-    compileOnly("ru.ruscrafting.arc:arc-core-paper-api:2.7.30")
+    implementation("ru.ruscrafting.arc:arc-core:2.7.33")
+    implementation("ru.ruscrafting.arc:arc-core-logging:2.7.33")
+    implementation("ru.ruscrafting.arc:arc-core-paper:2.7.33")
+    implementation("ru.ruscrafting.arc:arc-core-menu:2.7.33")
+    implementation("ru.ruscrafting.arc:arc-core-paper-menu:2.7.33")
+    compileOnly("ru.ruscrafting.arc:arc-core-paper-api:2.7.33")
     compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     compileOnly("com.github.angeschossen:LandsAPI:7.25.4")
     compileOnly("ru.ruscrafting.thirdparty:elitemobs-api:10.1.1")
 
     testImplementation(kotlin("test"))
-    testImplementation("ru.ruscrafting.arc:arc-core-paper-testing:2.7.30")
-    testImplementation("ru.ruscrafting.arc:arc-core-paper-api:2.7.30")
+    testImplementation("ru.ruscrafting.arc:arc-core-paper-testing:2.7.33")
+    testImplementation("ru.ruscrafting.arc:arc-core-paper-api:2.7.33")
     testImplementation("io.mockk:mockk:1.14.7")
 }
 
@@ -52,6 +52,11 @@ tasks {
         mergeServiceFiles()
         exclude("org/slf4j/**")
         exclude("ru/arc/paper/api/**")
+        exclude("ru/arc/paper/sql/PaperSqlServiceProvider*.class")
+        exclude("ru/arc/paper/sql/SharedPaperSqlService*.class")
+        exclude("ru/arc/paper/redis/PaperRedisServiceProvider*.class")
+        exclude("ru/arc/paper/redis/SharedPaperRedisService*.class")
+        exclude("ru/arc/paper/metrics/PaperArcMetricsProvider*.class")
         exclude("ru/arc/paper/packet/PaperVisualPacketRuntime*.class")
     }
     check { dependsOn(shadowJar) }
