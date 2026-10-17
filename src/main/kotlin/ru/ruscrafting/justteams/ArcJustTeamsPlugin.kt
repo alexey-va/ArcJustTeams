@@ -21,7 +21,7 @@ import ru.arc.observability.RuntimeHealthState
 import ru.arc.paper.menu.PaperDialogRuntime
 import ru.arc.paper.runtime.PaperPluginRuntime
 
-class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
+open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
     private lateinit var dialogs: TeamDialogs
     private var pluginRuntime: PaperPluginRuntime? = null
 
@@ -87,6 +87,13 @@ class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
         dialogs.begin(player)
         return true
     }
+
+    override fun onTabComplete(
+        sender: CommandSender,
+        command: Command,
+        alias: String,
+        args: Array<out String>,
+    ): List<String> = emptyList()
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     fun replaceEmptyTeamCommand(event: PlayerCommandPreprocessEvent) {
