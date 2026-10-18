@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "ru.ruscrafting"
-version = "0.3.15"
+version = "0.3.16"
 description = "Native team hub and Lands/EliteMobs bridge for justTeams"
 
 repositories {
@@ -24,19 +24,19 @@ kotlin { jvmToolchain(25) }
 
 dependencies {
     implementation(kotlin("stdlib"))
-    implementation("ru.ruscrafting.arc:arc-core:2.7.38")
-    implementation("ru.ruscrafting.arc:arc-core-logging:2.7.38")
-    implementation("ru.ruscrafting.arc:arc-core-paper:2.7.38")
-    implementation("ru.ruscrafting.arc:arc-core-menu:2.7.38")
-    implementation("ru.ruscrafting.arc:arc-core-paper-menu:2.7.38")
-    compileOnly("ru.ruscrafting.arc:arc-core-paper-api:2.7.38")
+    implementation("ru.ruscrafting.arc:arc-core:2.7.41")
+    implementation("ru.ruscrafting.arc:arc-core-logging:2.7.41")
+    implementation("ru.ruscrafting.arc:arc-core-paper:2.7.41")
+    implementation("ru.ruscrafting.arc:arc-core-menu:2.7.41")
+    implementation("ru.ruscrafting.arc:arc-core-paper-menu:2.7.41")
+    compileOnly("ru.ruscrafting.arc:arc-core-paper-api:2.7.41")
     compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     compileOnly("com.github.angeschossen:LandsAPI:7.25.4")
     compileOnly("ru.ruscrafting.thirdparty:elitemobs-api:10.1.1")
 
     testImplementation(kotlin("test"))
-    testImplementation("ru.ruscrafting.arc:arc-core-paper-testing:2.7.38")
-    testImplementation("ru.ruscrafting.arc:arc-core-paper-api:2.7.38")
+    testImplementation("ru.ruscrafting.arc:arc-core-paper-testing:2.7.41")
+    testImplementation("ru.ruscrafting.arc:arc-core-paper-api:2.7.41")
     testImplementation("io.mockk:mockk:1.14.7")
     testImplementation("com.github.angeschossen:LandsAPI:7.25.4")
 }
