@@ -30,27 +30,64 @@ internal class LandsBridge(plugin: JavaPlugin, private val nativeWork: BudgetedT
 
     fun ownedBy(id: String, playerId: UUID): Boolean = land(id)?.let { it.exists() && it.ownerUID == playerId } == true
 
-    fun sync(landIds: Set<String>, memberIds: Set<UUID>, mayTrust: (String, UUID) -> Boolean = { _, _ -> true }): CompletableFuture<LandSyncResult> {
+    /** Main-thread cursor; storage preparation suspends it and completion includes every native trust. */
+    fun sync(
+        landIds: Set<String>,
+        memberIds: Set<UUID>,
+        prepareTrust: ((String) -> CompletableFuture<Boolean>)? = null,
+        mayTrust: (String, UUID) -> Boolean = { _, _ -> true },
+    ): CompletableFuture<LandSyncResult> {
         var added = 0
         var failed = 0
         val lands = landIds.iterator()
         var active: Land? = null
         var activeId: String? = null
         var members = emptyList<UUID>().iterator()
-        return nativeWork.submit({ true }) {
-            if (!members.hasNext() && lands.hasNext()) {
-                activeId = lands.next()
-                active = land(checkNotNull(activeId))
-                members = if (active == null) emptyList<UUID>().iterator() else memberIds.iterator()
-            }
-            if (members.hasNext()) {
-                val playerId = members.next()
-                active?.takeIf { it.exists() && mayTrust(checkNotNull(activeId), playerId) && it.ownerUID != playerId && !it.isTrusted(playerId) }?.let {
-                    if (it.trustPlayer(playerId)) added++ else failed++
+        val result = CompletableFuture<LandSyncResult>()
+        fun eligible(land: Land, id: String, member: UUID): Boolean =
+            land.exists() && land.ownerUID != member && !land.isTrusted(member) && mayTrust(id, member)
+        fun trust(land: Land, member: UUID) {
+            if (land.trustPlayer(member)) added++ else failed++
+        }
+        fun resume() {
+            var preparation: CompletableFuture<Boolean>? = null
+            var applyPrepared: (() -> Unit)? = null
+            nativeWork.submit({ !result.isDone }) {
+                if (!members.hasNext() && lands.hasNext()) {
+                    activeId = lands.next()
+                    active = land(checkNotNull(activeId))
+                    members = if (active == null) emptyList<UUID>().iterator() else memberIds.iterator()
+                }
+                if (members.hasNext()) {
+                    val playerId = members.next()
+                    val id = checkNotNull(activeId)
+                    active?.takeIf { eligible(it, id, playerId) }?.let { target ->
+                        if (prepareTrust == null) trust(target, playerId)
+                        else {
+                            preparation = prepareTrust(id)
+                            applyPrepared = { if (eligible(target, id, playerId)) trust(target, playerId) }
+                        }
+                    }
+                }
+                preparation != null || (!members.hasNext() && !lands.hasNext())
+            }.whenComplete { _, captureFailure ->
+                val prepared = preparation
+                when {
+                    captureFailure != null -> result.completeExceptionally(captureFailure)
+                    prepared == null -> result.complete(LandSyncResult(added, failed))
+                    else -> prepared.thenCompose { allowed ->
+                        nativeWork.call({ !result.isDone }) {
+                            if (allowed) checkNotNull(applyPrepared).invoke()
+                            resume()
+                        }
+                    }.whenComplete { _, applyFailure ->
+                        if (applyFailure != null) result.completeExceptionally(applyFailure)
+                    }
                 }
             }
-            !members.hasNext() && !lands.hasNext()
-        }.thenApply { LandSyncResult(added, failed) }
+        }
+        resume()
+        return result
     }
 
     private fun land(id: String): Land? = runCatching { integration.getLandByULID(ULID.fromString(id)) }

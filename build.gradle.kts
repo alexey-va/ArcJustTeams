@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "ru.ruscrafting"
-version = "0.3.18"
+version = "0.3.19"
 description = "Native team hub and Lands/EliteMobs bridge for justTeams"
 
 repositories {

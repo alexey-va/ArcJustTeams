@@ -61,7 +61,7 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
         val minimum = config.getInt("elite-mobs.minimum-team-members", 2).coerceAtLeast(2)
         val dialogRuntime = lifecycle.own(PaperDialogRuntime(this))
         val lands = if (server.pluginManager.isPluginEnabled("Lands")) LandsBridge(this, nativeWork) else null
-        val landReconciler = lands?.let { TeamLandReconciler(teams, it, tasks, logger, nativeWork) }
+        val landReconciler = lands?.let { TeamLandReconciler(teams, it, tasks, logger) }
         lateinit var activeDialogs: TeamDialogs
         val eliteMobsParty = EliteMobsPartyBridge.load()
         val dungeonParties = lifecycle.own(DungeonPartyCoordinator(
@@ -112,7 +112,7 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
         }
         attempt { queue?.close() }
         attempt { runtime?.close() }
-        // Only detached name/immutable-model work remains; no worker waits for Main.
+        // Accepted justTeams reads/name/model work drains; native continuations are fenced and never awaited by workers.
         attempt { worker?.closeAsync()?.join() }
         failure?.let { logger.log(java.util.logging.Level.SEVERE, "Could not close ArcJustTeams", it) }
         Tasks.reset()

@@ -8,7 +8,7 @@ import java.util.Optional
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CompletableFuture
-import java.util.concurrent.Executor
+import ru.arc.core.BoundedAsyncExecutor
 import ru.arc.core.BudgetedTaskQueue
 import ru.arc.paper.player.PaperOfflinePlayerData
 
@@ -37,7 +37,9 @@ internal data class TeamSnapshot(
     val activeBuffs: Set<String>,
 )
 
-internal data class TeamLandMembership(val raw: Any, val id: Int, val landIds: Set<String>, val memberIds: Set<UUID>)
+internal data class TeamLandMembership(
+    val raw: Any, val id: Int, val landIds: Set<String>, val memberIds: Set<UUID>, val landRevision: Long,
+)
 
 internal data class TeamMemberSnapshot(val id: UUID, val name: String, val role: String, val online: Boolean)
 internal data class TeamJoinRequestSnapshot(val id: UUID, val name: String)
@@ -69,11 +71,11 @@ internal data class TeamBuffSnapshot(val display: String, val active: Boolean, v
 
 internal enum class UpgradeAttempt { SUCCESS, DISABLED, NOT_OWNER, MAXIMUM, NOT_ENOUGH_MONEY, NOT_ENOUGH_POINTS, FAILED }
 
-/** Reflection is deliberate: justTeams 2.6.7 has no stable published API artifact. */
+/** Reflection is deliberate: justTeams has no stable published API artifact. */
 internal class JustTeamsGateway(
     private val eliteQuestId: String,
     private val nativeWork: BudgetedTaskQueue,
-    private val worker: Executor,
+    private val worker: BoundedAsyncExecutor,
     private val offlineData: PaperOfflinePlayerData,
 ) {
     private val justTeams: Any = requireNotNull(Bukkit.getPluginManager().getPlugin("justTeams"))
@@ -82,6 +84,7 @@ internal class JustTeamsGateway(
     private val questManager: Any? = justTeams.call("getQuestManager")
     private val buffManager: Any? = justTeams.call("getTeamBuffManager")
     private val logger = Bukkit.getLogger()
+    private val landRevisions = mutableMapOf<Int, Long>()
 
     fun team(playerId: UUID): TeamSnapshot? = teamManager.call("getPlayerTeamCached", playerId)?.let(::snapshot)
 
@@ -89,19 +92,26 @@ internal class JustTeamsGateway(
 
     fun teamId(team: Any): Int = team.call("getId") as Int
 
-    fun rawTeams(): List<Any> = (teamManager.call("getAllTeams") as? Collection<*>)?.filterNotNull().orEmpty()
+    /** justTeams 2.6.9 uses this storage load in its own async browse flow; native consumers resume on Main. */
+    fun rawTeamsAsync(): CompletableFuture<List<Any>> = worker.submit {
+        (teamManager.call("getAllTeams") as? Collection<*>)?.filterNotNull().orEmpty()
+    }
 
     fun browseTeamsAsync(): CompletableFuture<List<TeamBrowseSnapshot>> {
-        val teams = rawTeams().iterator()
-        val captured = arrayListOf<TeamBrowseSnapshot>()
-        return nativeWork.submit({ true }) {
-            if (teams.hasNext()) {
-                val team = teams.next()
-                captured += TeamBrowseSnapshot(team.call("getPlainName") as String, team.call("getPlainTag") as String,
-                    (team.call("getMembers") as? Collection<*>)?.size ?: 0, team.call("isPublic") == true)
-            }
-            !teams.hasNext()
-        }.thenApplyAsync({ captured.sortedWith(compareByDescending<TeamBrowseSnapshot> { it.public }.thenByDescending { it.members }.thenBy { it.name.lowercase() }) }, worker)
+        return rawTeamsAsync().thenCompose { loaded ->
+            nativeWork.call({ true }) {
+                val teams = loaded.iterator()
+                val captured = arrayListOf<TeamBrowseSnapshot>()
+                nativeWork.submit({ true }) {
+                    if (teams.hasNext()) {
+                        val team = teams.next()
+                        captured += TeamBrowseSnapshot(team.call("getPlainName") as String, team.call("getPlainTag") as String,
+                            (team.call("getMembers") as? Collection<*>)?.size ?: 0, team.call("isPublic") == true)
+                    }
+                    !teams.hasNext()
+                }.thenApply { captured }
+            }.thenCompose { it }
+        }.thenApplyAsync({ captured -> captured.sortedWith(compareByDescending<TeamBrowseSnapshot> { it.public }.thenByDescending { it.members }.thenBy { it.name.lowercase() }) }, worker)
     }
 
     fun incrementDungeonRuns(team: Any) {
@@ -112,6 +122,7 @@ internal class JustTeamsGateway(
     }
 
     fun bindLand(team: Any, landId: String): Boolean {
+        invalidateLandMembership(team)
         val ids = landIds(team) + landId
         team.call("setCustomData", LAND_IDS, ids.joinToString(","))
         team.call("setCustomData", LEGACY_LAND_ID, ids.first())
@@ -119,37 +130,42 @@ internal class JustTeamsGateway(
     }
 
     fun unbindLand(team: Any, landId: String): Boolean {
+        invalidateLandMembership(team)
         val ids = landIds(team) - landId
         team.call("setCustomData", LAND_IDS, ids.joinToString(","))
         team.call("setCustomData", LEGACY_LAND_ID, ids.firstOrNull().orEmpty())
         return landId !in landIds(team)
     }
 
-    fun landLinkedElsewhere(teamId: Int, landId: String): CompletableFuture<Boolean> {
-        val teams = rawTeams().iterator()
-        var found = false
-        return nativeWork.submit({ true }) {
-            if (teams.hasNext()) {
-                val team = teams.next()
-                found = this.teamId(team) != teamId && landId in landIds(team)
-            }
-            found || !teams.hasNext()
-        }.thenApply { found }
-    }
+    fun landLinkedElsewhere(teamId: Int, landId: String): CompletableFuture<Boolean> =
+        rawTeamsAsync().thenApplyAsync({ loaded ->
+            loaded.any { team -> this.teamId(team) != teamId && landId in landIds(team) }
+        }, worker)
 
     fun landMembershipAsync(team: Any): CompletableFuture<TeamLandMembership> {
         val id = teamId(team)
-        val lands = landIds(team)
+        val revision = landRevisions[id] ?: 0L
         val members = rawMembers(team).iterator()
         val ids = linkedSetOf<UUID>()
         return nativeWork.submit({ true }) {
             if (members.hasNext()) { ids += members.next().call("getPlayerUuid") as UUID }
             return@submit !members.hasNext()
-        }.thenApply { TeamLandMembership(team, id, lands, ids) }
+        }.thenCompose { worker.submit { TeamLandMembership(team, id, landIds(team), ids.toSet(), revision) } }
     }
 
+    /** A fresh storage check, awaited before each new trust; no Bukkit/Lands access on the worker. */
+    fun landStillLinkedAsync(membership: TeamLandMembership, landId: String): CompletableFuture<Boolean> =
+        worker.submit { landId in landIds(membership.raw) }
+
+    /** Main-thread fence, checked again after storage preparation immediately before the native trust. */
     fun mayTrust(membership: TeamLandMembership, landId: String, member: UUID): Boolean =
-        landId in landIds(membership.raw) && teamFor(member)?.let(::teamId) == membership.id
+        landId in membership.landIds && (landRevisions[membership.id] ?: 0L) == membership.landRevision &&
+            teamFor(member)?.let(::teamId) == membership.id
+
+    private fun invalidateLandMembership(team: Any) {
+        val id = teamId(team)
+        landRevisions[id] = (landRevisions[id] ?: 0L) + 1L
+    }
 
     fun membersAsync(team: Any): CompletableFuture<List<TeamMemberSnapshot>> {
         val pending = rawMembers(team).iterator()
@@ -375,7 +391,7 @@ internal class JustTeamsGateway(
             javaClass.methods.firstOrNull { candidate ->
                 candidate.name == name && candidate.parameterCount == args.size &&
                     candidate.parameterTypes.zip(args).all { (type, value) -> type.boxed().isInstance(value) }
-            } ?: error("Unsupported justTeams 2.6.7 method: ${javaClass.name}#$name/${args.size}")
+            } ?: error("Unsupported justTeams method: ${javaClass.name}#$name/${args.size}")
         }
         return method.invoke(this, *args)
     }
