@@ -59,7 +59,8 @@ internal class TeamDialogs(
             id = "arcjustteams.root",
             title = texts.get(player, "title"),
             body = listOfNotNull(noticeBody(player, notice), DialogTextLayout.modelBody(texts.get(player, "intro")),
-                DialogTables.body(rows, frame = DialogTables.Frame.EPIC, width = 320)),
+                DialogTables.filledBody(rows = rows.map { (label, value) -> listOf(label.append(Component.text(": ", NamedTextColor.WHITE)).append(value)) },
+                    headers = null, width = 400, columnWeights = listOf(1))),
             buttons = listOf(
                 button("members", player, "nav.members", "nav.members-tooltip") { openMembers(player) },
                 button("quests", player, "nav.quests", "nav.quests-tooltip") { openQuests(player) },
@@ -155,7 +156,7 @@ internal class TeamDialogs(
         show(player, PaperDialogScreen(
             id = "arcjustteams.browse", title = texts.get(player, "browse.title"),
             body = listOf(DialogTextLayout.modelBody(texts.get(player, if (listed.isEmpty()) "browse.empty" else "browse.intro",
-                mapOf("page" to page + 1, "pages" to pages))), DialogTables.body(rows, frame = DialogTables.Frame.EPIC, width = 320)),
+                mapOf("page" to page + 1, "pages" to pages))), DialogTables.body(rows, headers = null, frame = DialogTables.Frame.COMMON, width = 320, columns = DialogTables.Columns.AUTO)),
             buttons = buttons, exitButton = footer(player), columns = 2,
         ), reopen = { openBrowse(player, page) }, pending = pending)
     }
@@ -204,7 +205,7 @@ internal class TeamDialogs(
         show(player, PaperDialogScreen(
             id = "arcjustteams.members", title = texts.get(player, "members.title"),
             body = listOfNotNull(noticeBody(player, notice), DialogTextLayout.modelBody(texts.get(player, "members.intro",
-                mapOf("page" to page + 1, "pages" to pages))), DialogTables.body(rows, frame = DialogTables.Frame.EPIC, width = 320)),
+                mapOf("page" to page + 1, "pages" to pages))), DialogTables.body(rows, headers = null, frame = DialogTables.Frame.COMMON, width = 320, columns = DialogTables.Columns.AUTO)),
             buttons = buttons, exitButton = footer(player), columns = 2,
         ), reopen = { openMembers(player, page) })
     }
@@ -245,7 +246,7 @@ internal class TeamDialogs(
                 texts.get(player, "members.player") to value(member.name),
                 texts.get(player, "members.role") to texts.get(player, "members.roles.${member.role}"),
                 texts.get(player, "members.status") to texts.get(player, if (member.online) "members.online" else "members.offline"),
-            ), frame = DialogTables.Frame.EPIC, width = 300)), buttons = buttons, exitButton = footer(player), columns = 2,
+            ), headers = null, frame = DialogTables.Frame.COMMON, width = 300, columns = DialogTables.Columns.AUTO)), buttons = buttons, exitButton = footer(player), columns = 2,
         ), reopen = { openMember(player, member.id, member.name) })
     }
 
@@ -437,7 +438,7 @@ internal class TeamDialogs(
                 add(DialogTextLayout.modelBody(texts.get(player, "settlements.intro")))
                 if (lands == null) add(DialogTextLayout.modelBody(texts.get(player, "notice.integration-missing")))
                 else if (linked.isEmpty()) add(DialogTextLayout.modelBody(texts.get(player, "settlements.none")))
-                else add(DialogTables.body(rows, frame = DialogTables.Frame.LEGENDARY, width = 320))
+                else add(DialogTables.body(rows, headers = null, frame = DialogTables.Frame.UNCOMMON, width = 320, columns = DialogTables.Columns.AUTO))
                 if (lands != null && owned.isEmpty()) add(DialogTextLayout.modelBody(texts.get(player, "settlements.empty")))
             }, buttons = buttons, exitButton = footer(player), columns = 2,
         ), reopen = { openLands(player) }, pending = pending)
@@ -538,7 +539,7 @@ internal class TeamDialogs(
         show(player, PaperDialogScreen(
             id = "arcjustteams.settings", title = texts.get(player, "settings.title"),
             body = listOfNotNull(noticeBody(player, notice), if (!editable) DialogTextLayout.modelBody(texts.get(player, "settings.forbidden")) else null,
-                DialogTables.body(rows, frame = DialogTables.Frame.LEGENDARY, width = 320)),
+                DialogTables.body(rows, headers = null, frame = DialogTables.Frame.RARE, width = 320, columns = DialogTables.Columns.AUTO)),
             buttons = buttons, exitButton = footer(player), columns = 2,
         ), reopen = { openSettings(player) })
     }
@@ -600,7 +601,7 @@ internal class TeamDialogs(
             body = buildList {
                 noticeBody(player, notice)?.let(::add)
                 add(DialogTextLayout.modelBody(texts.get(player, if (rows.isEmpty()) "allies.empty" else "allies.intro")))
-                if (rows.isNotEmpty()) add(DialogTables.body(rows, frame = DialogTables.Frame.LEGENDARY, width = 320))
+                if (rows.isNotEmpty()) add(DialogTables.body(rows, headers = null, frame = DialogTables.Frame.COMMON, width = 320, columns = DialogTables.Columns.AUTO))
                 if (!editable) add(DialogTextLayout.modelBody(texts.get(player, "allies.forbidden")))
             }, buttons = buttons, exitButton = footer(player), columns = 2,
         ), reopen = { openAllies(player) })
