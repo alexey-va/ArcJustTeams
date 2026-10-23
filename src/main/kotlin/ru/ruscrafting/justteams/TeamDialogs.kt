@@ -59,8 +59,8 @@ internal class TeamDialogs(
             id = "arcjustteams.root",
             title = texts.get(player, "title"),
             body = listOfNotNull(noticeBody(player, notice), DialogTextLayout.modelBody(texts.get(player, "intro")),
-                DialogTables.filledBody(rows = rows.map { (label, value) -> listOf(label.append(Component.text(": ", NamedTextColor.WHITE)).append(value)) },
-                    headers = null, width = 400, columnWeights = listOf(1))),
+                DialogTables.filledBody(rows = rows.map { (label, value) -> listOf(label, value) },
+                    headers = null, width = 320, columnWeights = listOf(1, 1))),
             buttons = listOf(
                 button("members", player, "nav.members", "nav.members-tooltip") { openMembers(player) },
                 button("quests", player, "nav.quests", "nav.quests-tooltip") { openQuests(player) },
