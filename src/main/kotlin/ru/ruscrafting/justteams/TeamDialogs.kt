@@ -665,52 +665,13 @@ internal class TeamDialogs(
             }
     }
 
-    private fun openQuests(player: Player, requestedPage: Int = 0, notice: String? = null) {
-        val team = teams.team(player.uniqueId) ?: return open(player)
-        val all = teams.quests(team)
-        val pages = maxOf(1, (all.size + 7) / 8)
-        val page = requestedPage.coerceIn(0, pages - 1)
-        val listed = all.drop(page * 8).take(8)
-        val rows = listed.map { quest ->
-            value(quest.name) to texts.get(player, when {
-                quest.claimed -> "quests.claimed"
-                quest.completed -> "quests.ready"
-                else -> "quests.progress"
-            }, mapOf("progress" to quest.progress, "required" to quest.required))
-        }
-        val buttons = buildList {
-            listed.forEachIndexed { index, quest ->
-                add(button("quest_$index", player, "quests.open", values = mapOf("quest" to quest.name)) { openQuest(player, quest.id) })
-            }
-            paging(player, page, pages, { openQuests(player, it) }, this)
-        }
+    internal fun openQuests(player: Player) {
+        if (ClanQuestMembershipBridge.openQuests(player)) return
         show(player, PaperDialogScreen(
             id = "arcjustteams.quests", title = texts.get(player, "quests.title"),
-            body = buildList {
-                noticeBody(player, notice)?.let(::add)
-                add(DialogTextLayout.modelBody(texts.get(player, if (all.isEmpty()) "quests.empty" else "quests.intro")))
-                if (rows.isNotEmpty()) add(DialogTables.body(rows, frame = DialogTables.Frame.EPIC, width = 320))
-            }, buttons = buttons, exitButton = footer(player), columns = 2,
-        ), reopen = { openQuests(player, page) })
-    }
-
-    private fun openQuest(player: Player, questId: String) {
-        val team = teams.team(player.uniqueId) ?: return open(player)
-        val quest = teams.quests(team).firstOrNull { it.id == questId } ?: return openQuests(player)
-        val rows = listOf(
-            texts.get(player, "quests.progress-label") to value("${quest.progress}/${quest.required}"),
-            texts.get(player, "quests.points-label") to value(quest.rewardPoints),
-            texts.get(player, "quests.money-label") to value(numbers.format(quest.rewardMoney)),
-        )
-        val buttons = if (quest.completed && !quest.claimed) listOf(button("claim", player, "quests.claim") {
-            val success = teams.claimQuest(player, team.id, quest.id)
-            openQuests(player, notice = if (success) "quests.claim-success" else "quests.claim-failed")
-        }) else emptyList()
-        show(player, PaperDialogScreen(
-            id = "arcjustteams.quest", title = value(quest.name),
-            body = listOf(DialogTextLayout.modelBody(value(quest.description)), DialogTables.body(rows, frame = DialogTables.Frame.EPIC, width = 300)),
-            buttons = buttons, exitButton = footer(player), columns = 1,
-        ), reopen = { openQuest(player, questId) })
+            body = listOf(DialogTextLayout.modelBody(texts.get(player, "quests.unavailable"))),
+            buttons = emptyList(), exitButton = footer(player), columns = 1,
+        ), reopen = { openQuests(player) })
     }
 
     private fun openBuffs(player: Player) {

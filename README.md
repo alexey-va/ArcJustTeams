@@ -1,6 +1,6 @@
 # ArcJustTeams
 
-Addon for justTeams 2.6.7 on RusCrafting. Bare `/team`, `/clan`, `/guild`, and `/clans` open a native Paper Dialog flow; existing explicit subcommands remain available as technical routes.
+Addon for justTeams 2.6.9 on RusCrafting. Bare `/team`, `/clan`, `/guild`, and `/clans` open a native Paper Dialog flow. `/team quests`, `/clan quests` and `/guild quests` open the shared ArcRanks clan quest board; other explicit subcommands retain their native routes.
 
 The hub adds:
 
@@ -9,7 +9,9 @@ The hub adds:
 - an EliteMobs group-run counter for teams;
 - no hand-off from the team flow to justTeams chest menus.
 
-EliteMobs tracking does not grant money, team points, or loot. Optional progress for an already configured justTeams custom quest can be enabled with `elite-mobs.quest-id` after an economy review.
+Clan quests belong to ArcRanks. The addon publishes immutable cached clan membership through `ClanMembershipProvider` and opens the same native flow through `ClanQuestMenuApi` (`arc-ranks-api:0.1.3`, compile-only). Shared dialogue history is retained. ArcRanks is optional; its absence produces an explicit unavailable state. Disable both `features.team_quests` in justTeams/config.yml and `settings.enabled` in justTeams/quests.yml to retire the old quest engine. Existing clan balances, points and native quest records are not rewritten.
+
+The separate EliteMobs run counter remains observational and grants no money, team points or loot; it no longer forwards progress into native JustTeams quests.
 
 The hub uses Russian for every client by default. Set `locale.default: en` for
 English, or `locale.use-client-locale: true` to follow the client's language and
@@ -17,7 +19,7 @@ fall back to `locale.default` for unsupported languages. Both language catalogs
 remain available. There is no plugin reload command; apply file changes with the
 next server restart.
 
-Build with `../ArcGiveaways/gradlew check`. The 0.3.3 shaded plugin is written to
-`build/libs/ArcJustTeams-0.3.4.jar`. Delayed post-action refreshes are bound to
+Build with `../ArcGiveaways/gradlew check`. The shaded plugin is written to
+`build/libs/ArcJustTeams-0.3.21.jar`. Delayed post-action refreshes are bound to
 the current native-dialog visit and are ignored after navigation or dismissal;
 ordinary internal transitions keep the dialog window open.

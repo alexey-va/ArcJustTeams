@@ -70,7 +70,14 @@ class TeamSqlThreadingTest {
             val gates = mutableListOf<SqlReadGate>()
             fun gate() = SqlReadGate().also(gates::add)
             try {
-                val gateway = JustTeamsGateway("", work, worker, mockk())
+                val gateway = JustTeamsGateway(work, worker, mockk())
+                val clan = checkNotNull(gateway.clanMembership(retained))
+                assertEquals("justteams:7", clan.clanId())
+                assertEquals(setOf(departed, retained), clan.memberIds())
+                nativeTeam.memberIds.remove(departed)
+                assertEquals(setOf(departed, retained), clan.memberIds(), "Accepted snapshot must remain immutable")
+                assertEquals(null, gateway.clanMembership(departed))
+                nativeTeam.memberIds.add(departed)
                 val reconciler = TeamLandReconciler(gateway, LandsBridge(plugin, work), tasks, plugin.logger)
                 val snapshot = sqlTeamSnapshot(nativeTeam, retained)
                 var heartbeats = 0

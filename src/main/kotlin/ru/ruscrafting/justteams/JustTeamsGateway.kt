@@ -55,25 +55,12 @@ internal data class TeamUpgradeSnapshot(
     val formattedMoneyCost: String?,
 )
 
-internal data class TeamQuestSnapshot(
-    val id: String,
-    val name: String,
-    val description: String,
-    val progress: Long,
-    val required: Long,
-    val completed: Boolean,
-    val claimed: Boolean,
-    val rewardPoints: Long,
-    val rewardMoney: Double,
-)
-
 internal data class TeamBuffSnapshot(val display: String, val active: Boolean, val pointsCost: Long)
 
 internal enum class UpgradeAttempt { SUCCESS, DISABLED, NOT_OWNER, MAXIMUM, NOT_ENOUGH_MONEY, NOT_ENOUGH_POINTS, FAILED }
 
 /** Reflection is deliberate: justTeams has no stable published API artifact. */
 internal class JustTeamsGateway(
-    private val eliteQuestId: String,
     private val nativeWork: BudgetedTaskQueue,
     private val worker: BoundedAsyncExecutor,
     private val offlineData: PaperOfflinePlayerData,
@@ -81,7 +68,6 @@ internal class JustTeamsGateway(
     private val justTeams: Any = requireNotNull(Bukkit.getPluginManager().getPlugin("justTeams"))
     private val teamManager: Any = justTeams.call("getTeamManager")!!
     private val upgradeManager: Any = justTeams.call("getTeamUpgradeManager")!!
-    private val questManager: Any? = justTeams.call("getQuestManager")
     private val buffManager: Any? = justTeams.call("getTeamBuffManager")
     private val logger = Bukkit.getLogger()
     private val landRevisions = mutableMapOf<Int, Long>()
@@ -89,6 +75,16 @@ internal class JustTeamsGateway(
     fun team(playerId: UUID): TeamSnapshot? = teamManager.call("getPlayerTeamCached", playerId)?.let(::snapshot)
 
     fun teamFor(playerId: UUID): Any? = teamManager.call("getPlayerTeamCached", playerId)
+
+    fun clanMembership(playerId: UUID): ru.ruscrafting.ranks.api.ClanMembership? {
+        check(Bukkit.isPrimaryThread()) { "Clan membership must be captured on the gameplay thread" }
+        val team = teamFor(playerId) ?: return null
+        val members = rawMembers(team).mapTo(linkedSetOf()) { it.call("getPlayerUuid") as UUID }
+        if (playerId !in members) return null
+        return ru.ruscrafting.ranks.api.ClanMembership(
+            "justteams:${teamId(team)}", team.call("getPlainName") as String, members,
+        )
+    }
 
     fun teamId(team: Any): Int = team.call("getId") as Int
 
@@ -117,8 +113,6 @@ internal class JustTeamsGateway(
     fun incrementDungeonRuns(team: Any) {
         val current = custom(team, DUNGEON_RUNS)?.toLongOrNull() ?: 0
         team.call("setCustomData", DUNGEON_RUNS, (current + 1).toString())
-        val questId = eliteQuestId.trim()
-        if (questId.isNotEmpty()) questManager?.call("addCustomProgress", team, questId, 1L)
     }
 
     fun bindLand(team: Any, landId: String): Boolean {
@@ -292,31 +286,6 @@ internal class JustTeamsGateway(
     fun acceptAllyRequest(player: Player, id: Int) = teamManager.call("acceptAllyRequest", player, id)
     fun denyAllyRequest(player: Player, id: Int) = teamManager.call("denyAllyRequest", player, id)
     fun removeAlly(player: Player, name: String) = teamManager.call("removeAlly", player, name)
-
-    fun quests(team: TeamSnapshot): List<TeamQuestSnapshot> {
-        val manager = questManager ?: return emptyList()
-        if (manager.call("isEnabled") != true) return emptyList()
-        val progress = (manager.call("getProgress", team.id) as? Map<*, *>).orEmpty()
-        return progress.entries.mapNotNull { (id, rawProgress) ->
-            val questId = id as? String ?: return@mapNotNull null
-            val state = rawProgress ?: return@mapNotNull null
-            val quest = manager.call("getQuest", questId) ?: return@mapNotNull null
-            TeamQuestSnapshot(
-                id = questId,
-                name = plain(quest.call("getDisplayName") as String),
-                description = (quest.call("getDescription") as? Collection<*>)?.joinToString(" ") { plain(it.toString()) }.orEmpty(),
-                progress = state.call("getProgress") as Long,
-                required = quest.call("getRequired") as Long,
-                completed = state.call("isCompleted") == true,
-                claimed = state.call("isClaimed") == true,
-                rewardPoints = quest.call("getRewardPoints") as Long,
-                rewardMoney = quest.call("getRewardMoney") as Double,
-            )
-        }.sortedWith(compareBy<TeamQuestSnapshot> { it.claimed }.thenByDescending { it.completed }.thenBy { it.name.lowercase() })
-    }
-
-    fun claimQuest(player: Player, teamId: Int, questId: String): Boolean =
-        questManager?.call("claimReward", teamId, questId, player) == true
 
     fun buffs(team: TeamSnapshot): List<TeamBuffSnapshot> {
         val manager = buffManager ?: return emptyList()

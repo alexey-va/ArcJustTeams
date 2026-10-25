@@ -56,8 +56,9 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
 
     private fun finishEnable(lifecycle: PaperPluginRuntime, worker: BoundedAsyncExecutor, tasks: LifecycleTaskScope, texts: Texts) {
         val nativeWork = lifecycle.own(BudgetedTaskQueue(tasks)).also { this.nativeWork = it }
-        val teams = JustTeamsGateway(config.getString("elite-mobs.quest-id").orEmpty(), nativeWork, worker,
+        val teams = JustTeamsGateway(nativeWork, worker,
             ru.arc.paper.player.PaperOfflinePlayerData.capture(server))
+        if (server.pluginManager.isPluginEnabled("ArcRanks")) ClanQuestMembershipBridge.install(this, teams)
         val minimum = config.getInt("elite-mobs.minimum-team-members", 2).coerceAtLeast(2)
         val dialogRuntime = lifecycle.own(PaperDialogRuntime(this))
         val lands = if (server.pluginManager.isPluginEnabled("Lands")) LandsBridge(this, nativeWork) else null
@@ -101,6 +102,7 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
 
     override fun onDisable() {
         ready = false
+        server.servicesManager.unregisterAll(this)
         val queue = nativeWork.also { nativeWork = null }
         val runtime = pluginRuntime.also { pluginRuntime = null }
         val worker = storage.also { storage = null }
@@ -136,8 +138,16 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     fun replaceEmptyTeamCommand(event: PlayerCommandPreprocessEvent) {
         if (!ready) return
-        if (!config.getBoolean("replace-empty-team-command", true)) return
         val command = event.message.trim().lowercase()
+        val parts = command.split(Regex("\\s+"))
+        if (parts.size == 2 && parts[0] in setOf("/team", "/clan", "/guild", "/teams", "/justteams:team") &&
+            parts[1] in setOf("quests", "quest")) {
+            if (!event.player.hasPermission("arcjustteams.use")) return
+            event.isCancelled = true
+            dialogs.openQuests(event.player)
+            return
+        }
+        if (!config.getBoolean("replace-empty-team-command", true)) return
         if (command !in setOf("/team", "/clan", "/guild")) return
         if (!event.player.hasPermission("arcjustteams.use")) return
         if (!::dialogs.isInitialized) return
