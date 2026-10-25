@@ -198,9 +198,9 @@ internal class TeamDialogs(
                 add(button("invite", player, "members.invite") { openInvite(player) })
                 add(button("requests", player, "members.requests") { openJoinRequests(player) })
             }
-            paging(player, page, pages, { openMembers(player, it) }, this)
             if (team.ownerId == player.uniqueId) add(button("disband", player, "members.disband") { openDisband(player) })
             else add(button("leave", player, "members.leave") { openLeave(player) })
+            paging(player, page, pages, { openMembers(player, it) }, this)
         }
         show(player, PaperDialogScreen(
             id = "arcjustteams.members", title = texts.get(player, "members.title"),
@@ -757,7 +757,7 @@ internal class TeamDialogs(
         runtime.open(player, presented, reopen, {
             generation.invalidate()
             visitGenerations.remove(player.uniqueId, generation)
-        }, false)
+        }, presented.exitButton?.closeDialogBeforeAction == true)
     }
 
     private fun runLaterOpen(player: Player, delayTicks: Long, action: () -> Unit) {
