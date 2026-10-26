@@ -20,6 +20,8 @@ import ru.arc.observability.RuntimeHealthContribution
 import ru.arc.observability.RuntimeHealthState
 import ru.arc.paper.menu.PaperDialogRuntime
 import ru.arc.paper.runtime.PaperPluginRuntime
+import ru.arc.paper.runtime.PaperPluginHotload
+import java.util.concurrent.CompletableFuture
 import ru.arc.core.BoundedAsyncExecutor
 import ru.arc.core.BudgetedTaskQueue
 import ru.arc.core.BukkitTaskScheduler
@@ -30,8 +32,11 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
     private var storage: BoundedAsyncExecutor? = null
     private var nativeWork: BudgetedTaskQueue? = null
     private var ready = false
+    private val hotload = PaperPluginHotload(this, ::stopRuntime)
 
     override fun onEnable() {
+        hotload.beginGeneration()
+        hotload.register()
         ready = false
         val lifecycle = PaperPluginRuntime(this, "arc-just-teams", BukkitTaskScheduler(this)).also {
             pluginRuntime = it
@@ -101,8 +106,12 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
     }
 
     override fun onDisable() {
+        hotload.prepare()
+        hotload.close()
+    }
+
+    private fun stopRuntime(): Map<String, CompletableFuture<*>> {
         ready = false
-        server.servicesManager.unregisterAll(this)
         val queue = nativeWork.also { nativeWork = null }
         val runtime = pluginRuntime.also { pluginRuntime = null }
         val worker = storage.also { storage = null }
@@ -117,7 +126,11 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
         // Accepted justTeams reads/name/model work drains; native continuations are fenced and never awaited by workers.
         attempt { worker?.closeAsync()?.join() }
         failure?.let { logger.log(java.util.logging.Level.SEVERE, "Could not close ArcJustTeams", it) }
-        Tasks.reset()
+        attempt { Tasks.reset() }
+        attempt { hotload.retireGameplayRegistrations() }
+        attempt { ru.arc.logging.ArcLogging.close() }
+        return mapOf("runtime" to (failure?.let { CompletableFuture.failedFuture<Unit>(it) }
+            ?: CompletableFuture.completedFuture(Unit)))
     }
 
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
