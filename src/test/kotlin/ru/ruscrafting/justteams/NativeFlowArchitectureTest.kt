@@ -21,7 +21,6 @@ class NativeFlowArchitectureTest {
             paths.filter { it.toString().endsWith(".kt") && it.fileName.toString() != "JustTeamsBuffBridge.kt" }
                 .forEach { path -> assertFalse("org.bukkit.inventory" in Files.readString(path), path.toString()) }
         }
-        val allowedPresenceGuard = "Class.forName(\"ru.arc.dungeons.api.ArcPvpService\", false, TeamPvpPolicy::class.java.classLoader)"
-        assertFalse(Regex("Class\\.forName\\(\\s*\"ru\\.arc").containsMatchIn(source.replace(allowedPresenceGuard, "")))
+        assertFalse(Regex("Class\\.forName\\(\\s*\"ru\\.arc").containsMatchIn(source))
     }
 }

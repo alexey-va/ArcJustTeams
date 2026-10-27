@@ -32,14 +32,11 @@ internal class TeamPvpPolicy(
     }
 }
 
-/** Older ARC versions do not export this optional API. Never load its typed adapter in that case. */
+/** Keep the optional typed boundary safe when older ARC versions do not export the API. */
 internal fun arcPvpNameplateCheck(plugin: Plugin): (Player, Player) -> TeamPvpState {
-    try {
-        Class.forName("ru.arc.dungeons.api.ArcPvpService", false, TeamPvpPolicy::class.java.classLoader)
-    } catch (_: ClassNotFoundException) {
-        return { _, _ -> TeamPvpState.UNKNOWN }
+    return try {
+        ArcPvpNameplateBridge(plugin)::check
     } catch (_: LinkageError) {
-        return { _, _ -> TeamPvpState.UNKNOWN }
+        { _, _ -> TeamPvpState.UNKNOWN }
     }
-    return ArcPvpNameplateBridge(plugin)::check
 }

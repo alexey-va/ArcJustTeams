@@ -7,11 +7,42 @@ import org.bukkit.entity.Player
 import org.bukkit.plugin.Plugin
 import org.bukkit.plugin.ServicesManager
 import ru.arc.dungeons.api.ArcPvpService
+import java.net.URLClassLoader
 import java.util.logging.Logger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 class ArcPvpNameplateBridgeTest {
+    @Test
+    fun `older runtime without the optional API returns unknown`() {
+        val services = mockk<ServicesManager>()
+        val plugin = plugin(services)
+        val attacker = mockk<Player>()
+        val victim = mockk<Player>()
+        val source = TeamPvpPolicy::class.java.protectionDomain.codeSource.location
+        val parent = javaClass.classLoader
+        object : URLClassLoader(arrayOf(source), parent) {
+            override fun loadClass(name: String, resolve: Boolean): Class<*> {
+                if (name.startsWith("ru.arc.dungeons.api.")) throw ClassNotFoundException(name)
+                return synchronized(getClassLoadingLock(name)) {
+                    val type = findLoadedClass(name) ?: if (
+                        name.startsWith("ru.ruscrafting.justteams.TeamPvp") ||
+                        name.startsWith("ru.ruscrafting.justteams.ArcPvpNameplateBridge")
+                    ) findClass(name) else super.loadClass(name, false)
+                    if (resolve) resolveClass(type)
+                    type
+                }
+            }
+        }.use { isolated ->
+            val factory = isolated.loadClass("ru.ruscrafting.justteams.TeamPvpPolicyKt")
+                .getMethod("arcPvpNameplateCheck", Plugin::class.java)
+            @Suppress("UNCHECKED_CAST")
+            val check = factory.invoke(null, plugin) as (Player, Player) -> Enum<*>
+            assertEquals("UNKNOWN", check(attacker, victim).name)
+            verify(exactly = 0) { services.load(any<Class<*>>()) }
+        }
+    }
+
     @Test
     fun `authoritative denials use exact melee source and allowed remains unverified`() {
         val services = mockk<ServicesManager>()
