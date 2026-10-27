@@ -7,10 +7,11 @@ import java.util.logging.Level
 
 /** Isolated optional API boundary. ARC owns settlement and clan rules; this query stays silent. */
 internal class ArcPvpNameplateBridge(private val plugin: Plugin) {
+    private val serviceType = ArcPvpService::class.java
     private var failureReported = false
 
     fun check(attacker: Player, target: Player): TeamPvpState = try {
-        val service = plugin.server.servicesManager.load(ArcPvpService::class.java)
+        val service = plugin.server.servicesManager.load(serviceType)
         when (service?.check(attacker, target, attacker)) {
             ArcPvpService.Result.SETTLEMENT -> TeamPvpState.LANDS
             ArcPvpService.Result.TEAM, ArcPvpService.Result.TEAM_PROJECTILE,
