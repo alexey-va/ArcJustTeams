@@ -43,7 +43,13 @@ internal data class TeamLandMembership(
 
 internal data class TeamMemberSnapshot(val id: UUID, val name: String, val role: String, val online: Boolean)
 internal data class TeamJoinRequestSnapshot(val id: UUID, val name: String)
-internal data class TeamBrowseSnapshot(val name: String, val tag: String, val members: Int, val public: Boolean)
+internal data class TeamBrowseSnapshot(
+    val name: String, val tag: String, val members: Int, val public: Boolean,
+    val id: Int = 0, val points: Long = 0, val tier: Int = 1, val acceptsAllyRequests: Boolean = true,
+)
+internal val TEAM_RANKING: Comparator<TeamBrowseSnapshot> = compareByDescending<TeamBrowseSnapshot> { it.points }
+    .thenByDescending { it.tier }.thenByDescending { it.members }.thenBy { it.name.lowercase() }.thenBy { it.id }
+internal data class TeamNameplateTeam(val id: Int, val tag: String, val pvp: Boolean, val allies: Set<Int>)
 internal data class TeamUpgradeSnapshot(
     val enabled: Boolean,
     val currentTier: Int,
@@ -55,7 +61,9 @@ internal data class TeamUpgradeSnapshot(
     val formattedMoneyCost: String?,
 )
 
-internal data class TeamBuffSnapshot(val display: String, val active: Boolean, val pointsCost: Long)
+internal data class TeamBuffSnapshot(val display: String, val active: Boolean, val pointsCost: Long, val id: String = "")
+
+internal enum class BuffAttempt { ENABLED, DISABLED, NOT_ALLOWED, MAXIMUM, NOT_ENOUGH_POINTS, CHANGED, PENDING, UNAVAILABLE, FAILED }
 
 internal enum class UpgradeAttempt { SUCCESS, DISABLED, NOT_OWNER, MAXIMUM, NOT_ENOUGH_MONEY, NOT_ENOUGH_POINTS, FAILED }
 
@@ -64,7 +72,8 @@ internal class JustTeamsGateway(
     private val nativeWork: BudgetedTaskQueue,
     private val worker: BoundedAsyncExecutor,
     private val offlineData: PaperOfflinePlayerData,
-) {
+    buffBridgeFactory: (Any, BudgetedTaskQueue) -> JustTeamsBuffBridge? = JustTeamsBuffBridge::load,
+) : AutoCloseable {
     private val justTeams: Any = requireNotNull(Bukkit.getPluginManager().getPlugin("justTeams"))
     private val teamManager: Any = justTeams.call("getTeamManager")!!
     private val upgradeManager: Any = justTeams.call("getTeamUpgradeManager")!!
@@ -75,6 +84,14 @@ internal class JustTeamsGateway(
     fun team(playerId: UUID): TeamSnapshot? = teamManager.call("getPlayerTeamCached", playerId)?.let(::snapshot)
 
     fun teamFor(playerId: UUID): Any? = teamManager.call("getPlayerTeamCached", playerId)
+
+    /** Small immutable combat/identity view; never loads storage or enumerates members. */
+    fun nameplateTeam(playerId: UUID): TeamNameplateTeam? {
+        check(Bukkit.isPrimaryThread()) { "Nameplate identity must be captured on the gameplay thread" }
+        val team = teamFor(playerId) ?: return null
+        return TeamNameplateTeam(teamId(team), team.call("getPlainTag") as String,
+            team.call("isPvpEnabled") == true, intList(team.call("getAllies")).toSet())
+    }
 
     fun clanMembership(playerId: UUID): ru.ruscrafting.ranks.api.ClanMembership? {
         check(Bukkit.isPrimaryThread()) { "Clan membership must be captured on the gameplay thread" }
@@ -102,12 +119,14 @@ internal class JustTeamsGateway(
                     if (teams.hasNext()) {
                         val team = teams.next()
                         captured += TeamBrowseSnapshot(team.call("getPlainName") as String, team.call("getPlainTag") as String,
-                            (team.call("getMembers") as? Collection<*>)?.size ?: 0, team.call("isPublic") == true)
+                            (team.call("getMembers") as? Collection<*>)?.size ?: 0, team.call("isPublic") == true,
+                            id = teamId(team), points = (team.call("getPoints") as Number).toLong(),
+                            tier = team.call("getTier") as Int, acceptsAllyRequests = team.call("acceptsRequests") == true)
                     }
                     !teams.hasNext()
                 }.thenApply { captured }
             }.thenCompose { it }
-        }.thenApplyAsync({ captured -> captured.sortedWith(compareByDescending<TeamBrowseSnapshot> { it.public }.thenByDescending { it.members }.thenBy { it.name.lowercase() }) }, worker)
+        }.thenApplyAsync({ captured -> captured.sortedWith(TEAM_RANKING) }, worker)
     }
 
     fun incrementDungeonRuns(team: Any) {
@@ -298,6 +317,7 @@ internal class JustTeamsGateway(
                 display = plain(buff.field("display") as String),
                 active = key in team.activeBuffs,
                 pointsCost = (buff.field("pointsCost") as Number).toLong(),
+                id = key,
             )
         }.sortedWith(compareByDescending<TeamBuffSnapshot> { it.active }.thenBy { it.display.lowercase() })
     }
@@ -310,6 +330,22 @@ internal class JustTeamsGateway(
             manager.call("getRadius") as Int,
         )
     }
+
+    private val buffBridge = buffBridgeFactory(justTeams, nativeWork)
+    val cleanup: CompletableFuture<Void> = buffBridge?.cleanup ?: CompletableFuture.completedFuture(null)
+
+    fun buffEditingAvailable(): Boolean = buffBridge?.available() == true
+
+    /** Native task return plus selected-state readback; justTeams exposes no SQL success/durability result. */
+    fun setBuff(player: Player, expectedTeamId: Int, buffId: String, enabled: Boolean,
+        expectedPointsCost: Long): CompletableFuture<BuffAttempt> {
+        val bridge = buffBridge ?: return CompletableFuture.completedFuture(BuffAttempt.UNAVAILABLE)
+        return nativeWork.call({ true }) {
+            bridge.setBuff(player, expectedTeamId, buffId, enabled, expectedPointsCost)
+        }.thenCompose { it }
+    }
+
+    override fun close() { buffBridge?.close() }
 
     fun snapshot(team: Any): TeamSnapshot {
         val members = rawMembers(team)

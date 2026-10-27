@@ -26,7 +26,7 @@ internal class Texts(private val plugin: JavaPlugin) {
     }
 
     fun get(player: Player, key: String, values: Map<String, Any> = emptyMap()): Component {
-        val components = values.mapValues { (_, value) -> renderer.literal(value) }
+        val components = values.mapValues { (_, value) -> if (value is Component) value else renderer.literal(value) }
         val locale = if (plugin.config.getBoolean("locale.use-client-locale", false)) player.locale().toLanguageTag() else null
         return renderer.render(key, locale, components)
             .decoration(TextDecoration.ITALIC, false)

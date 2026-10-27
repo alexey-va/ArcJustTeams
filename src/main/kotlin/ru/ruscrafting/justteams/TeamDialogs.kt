@@ -9,6 +9,7 @@ import ru.arc.core.BudgetedTaskQueue
 import ru.arc.core.BoundedAsyncExecutor
 import ru.arc.core.whenCompleteSync
 import ru.arc.paper.menu.DialogTables
+import ru.arc.paper.menu.DialogDecoration
 import ru.arc.paper.menu.DialogTextLayout
 import ru.arc.paper.menu.PaperDialogActionId
 import ru.arc.paper.menu.PaperDialogButton
@@ -47,30 +48,50 @@ internal class TeamDialogs(
         val team = teams.team(player.uniqueId)
         if (team == null) return openEmpty(player, notice)
         landReconciler?.reconcile(team)
-        val rows = listOf(
-            texts.get(player, "summary.name") to value("[${team.tag}] ${team.name}"),
-            texts.get(player, "summary.tier") to value(team.tier),
-            texts.get(player, "summary.points") to value(team.points),
-            texts.get(player, "summary.members") to value("${team.onlineCount}/${team.memberCount}"),
-            texts.get(player, "summary.lands") to value(team.landIds.size),
-            texts.get(player, "summary.dungeons") to value(team.dungeonRuns),
-        )
+        val linked = lands?.linked(team.landIds).orEmpty()
+        val quickLands = linked.take(2)
         show(player, PaperDialogScreen(
             id = "arcjustteams.root",
-            title = texts.get(player, "title"),
-            body = listOfNotNull(noticeBody(player, notice), DialogTextLayout.modelBody(texts.get(player, "intro")),
-                DialogTables.filledBody(rows = rows.map { (label, value) -> listOf(label, value) },
-                    headers = null, width = 320, columnWeights = listOf(1, 1))),
-            buttons = listOf(
-                button("members", player, "nav.members", "nav.members-tooltip") { openMembers(player) },
-                button("quests", player, "nav.quests", "nav.quests-tooltip") { openQuests(player) },
-                button("upgrades", player, "nav.upgrades", "nav.upgrades-tooltip") { openUpgrades(player) },
-                button("buffs", player, "nav.buffs", "nav.buffs-tooltip") { openBuffs(player) },
-                button("lands", player, "nav.lands", "nav.lands-tooltip") { openLands(player) },
-                button("dungeons", player, "nav.dungeons", "nav.dungeons-tooltip") { openDungeons(player) },
-                button("allies", player, "nav.allies", "nav.allies-tooltip") { openAllies(player) },
-                button("settings", player, "nav.settings", "nav.settings-tooltip") { openSettings(player) },
-            ),
+            title = texts.get(player, "summary.title", mapOf("tag" to team.tag, "team" to team.name)),
+            body = buildList {
+                noticeBody(player, notice)?.let(::add)
+                add(DialogTables.groupedFactsBody(listOf(
+                    DialogTables.FactsGroup(texts.get(player, "summary.roster"), listOf(
+                        field(player, "summary.members", DialogDecoration.FieldIcon.PLAYER) to value(team.memberCount),
+                        field(player, "summary.online", DialogDecoration.FieldIcon.ONLINE) to value(team.onlineCount),
+                        texts.get(player, "summary.dungeons") to value(team.dungeonRuns),
+                    )),
+                    DialogTables.FactsGroup(texts.get(player, "summary.progression"), listOf(
+                        field(player, "summary.tier", DialogDecoration.FieldIcon.RANK) to value(team.tier),
+                        texts.get(player, "summary.points") to value(numbers.format(team.points)),
+                        texts.get(player, "summary.buffs") to value(team.activeBuffs.size),
+                    )),
+                ), DialogTables.PanelSpec(DialogTables.PanelSkin.PLUM, 340, 2, true)))
+                if (quickLands.isNotEmpty()) {
+                    add(DialogTables.body(quickLands.map { land ->
+                        value(land.name) to texts.get(player, "settlements.row", mapOf("members" to land.members))
+                    }, headers = field(player, "summary.lands", DialogDecoration.FieldIcon.LANDS) to
+                        texts.get(player, "summary.land-count", mapOf("count" to linked.size)),
+                        frame = DialogTables.Frame.UNCOMMON, width = 340, columns = DialogTables.Columns.AUTO))
+                    if (linked.size > quickLands.size) add(DialogTextLayout.modelBody(texts.get(player, "summary.more-lands",
+                        mapOf("count" to linked.size - quickLands.size))))
+                } else add(DialogTextLayout.modelBody(texts.get(player,
+                    if (lands == null) "notice.integration-missing" else "settlements.none")))
+            },
+            buttons = buildList {
+                add(button("members", player, "nav.members", "nav.members-tooltip") { openMembers(player) })
+                add(button("allies", player, "nav.allies", "nav.allies-tooltip") { openAllies(player) })
+                add(button("quests", player, "nav.quests", "nav.quests-tooltip") { openQuests(player) })
+                add(button("dungeons", player, "nav.dungeons", "nav.dungeons-tooltip") { openDungeons(player) })
+                add(button("upgrades", player, "nav.upgrades", "nav.upgrades-tooltip") { openUpgrades(player) })
+                add(button("buffs", player, "nav.buffs", "nav.buffs-tooltip") { openBuffs(player) })
+                add(button("lands", player, "nav.lands", "nav.lands-tooltip") { openLands(player) })
+                add(button("settings", player, "nav.settings", "nav.settings-tooltip") { openSettings(player) })
+                quickLands.forEachIndexed { index, land ->
+                    add(button("spawn_$index", player, "settlements.travel", "settlements.travel-tooltip",
+                        mapOf("land" to land.name)) { travelToLand(player, team.id, land.id) })
+                }
+            },
             exitButton = close(player), columns = 2,
         ), reopen = { open(player) })
     }
@@ -134,12 +155,13 @@ internal class TeamDialogs(
     }
 
     private fun presentBrowse(player: Player, requestedPage: Int, pending: Boolean, all: List<TeamBrowseSnapshot>) {
-        val pages = maxOf(1, (all.size + 7) / 8)
+        val pages = maxOf(1, (all.size + 5) / 6)
         val page = requestedPage.coerceIn(0, pages - 1)
-        val listed = all.subList(page * 8, minOf(all.size, page * 8 + 8))
-        val rows = listed.map { team ->
-            value("[${team.tag}] ${team.name}") to texts.get(player, if (team.public) "browse.public" else "browse.private",
-                mapOf("members" to team.members))
+        val listed = all.subList(page * 6, minOf(all.size, page * 6 + 6))
+        val rows = listed.mapIndexed { index, team ->
+            texts.get(player, "browse.ranked-name", mapOf("rank" to page * 6 + index + 1, "tag" to team.tag, "team" to team.name)) to
+                texts.get(player, if (team.public) "browse.public" else "browse.private",
+                    mapOf("members" to team.members, "points" to numbers.format(team.points)))
         }
         val buttons = buildList {
             listed.forEachIndexed { index, team ->
@@ -371,24 +393,47 @@ internal class TeamDialogs(
     private fun openUpgrades(player: Player, notice: String? = null) {
         val team = teams.team(player.uniqueId) ?: return open(player)
         val upgrade = teams.upgrade(team.raw)
-        val rows = buildList {
-            add(texts.get(player, "upgrades.level") to value(upgrade.currentTier))
-            add(texts.get(player, "upgrades.members") to value(upgrade.maxMembers))
-            if (upgrade.nextTier != null) {
-                add(texts.get(player, "upgrades.next") to value(upgrade.nextTier))
-                add(texts.get(player, "upgrades.next-members") to value(upgrade.nextMaxMembers ?: upgrade.maxMembers))
-                if (upgrade.moneyCost > 0) add(texts.get(player, "upgrades.money-cost") to value(upgrade.formattedMoneyCost.orEmpty()))
-                if (upgrade.pointsCost > 0) add(texts.get(player, "upgrades.points-cost") to value(upgrade.pointsCost))
-            }
-        }
-        val buttons = if (upgrade.nextTier == null) emptyList() else listOf(
+        val canUpgrade = upgrade.enabled && upgrade.nextTier != null && team.ownerId == player.uniqueId &&
+            team.balance >= upgrade.moneyCost && team.points >= upgrade.pointsCost
+        val buttons = if (!canUpgrade) emptyList() else listOf(
             button("upgrade_confirm", player, "upgrades.continue") { openUpgradeConfirm(player, team, upgrade) },
         )
         show(player, PaperDialogScreen(
             id = "arcjustteams.upgrades", title = texts.get(player, "upgrades.title"),
-            body = listOfNotNull(noticeBody(player, notice), DialogTextLayout.modelBody(texts.get(player,
-                if (!upgrade.enabled) "upgrades.disabled" else if (upgrade.nextTier == null) "upgrades.maximum" else "upgrades.intro")),
-                DialogTables.body(rows, frame = DialogTables.Frame.EPIC, width = 320)),
+            body = buildList {
+                noticeBody(player, notice)?.let(::add)
+                val groups = buildList {
+                    add(DialogTables.FactsGroup(texts.get(player, "upgrades.current"), listOf(
+                        field(player, "summary.tier", DialogDecoration.FieldIcon.RANK) to value(upgrade.currentTier),
+                        texts.get(player, "upgrades.members") to value(upgrade.maxMembers),
+                    )))
+                    if (upgrade.nextTier != null) add(DialogTables.FactsGroup(texts.get(player, "upgrades.next"), listOf(
+                        field(player, "summary.tier", DialogDecoration.FieldIcon.RANK) to value(upgrade.nextTier),
+                        texts.get(player, "upgrades.members") to value(upgrade.nextMaxMembers ?: upgrade.maxMembers),
+                    )))
+                }
+                add(DialogTables.groupedFactsBody(groups, DialogTables.PanelSpec(DialogTables.PanelSkin.PLUM, 340, groups.size, true)))
+                if (upgrade.enabled && upgrade.nextTier != null) {
+                    if (upgrade.moneyCost > 0) add(DialogTables.factsBody(listOf(
+                        field(player, "upgrades.money-cost", DialogDecoration.FieldIcon.BALANCE) to
+                            value("${numbers.format(team.balance)} / ${numbers.format(upgrade.moneyCost)}"),
+                    ), DialogTables.FactsLayout.ROWS, DialogTables.PanelSpec(DialogTables.PanelSkin.COCOA, 340, 1, true)))
+                    if (upgrade.pointsCost > 0) add(DialogDecoration.library().progressBody(
+                        texts.get(player, "upgrades.points-progress"), team.points.toDouble(), upgrade.pointsCost.toDouble(),
+                        value("${numbers.format(team.points)} / ${numbers.format(upgrade.pointsCost)}"),
+                        340, 12, DialogDecoration.ProgressColor.VIOLET,
+                    ))
+                }
+                val status = when {
+                    !upgrade.enabled -> "upgrades.disabled"
+                    upgrade.nextTier == null -> "upgrades.maximum"
+                    team.ownerId != player.uniqueId -> "upgrades.owner-only"
+                    team.balance < upgrade.moneyCost -> "upgrades.need-money"
+                    team.points < upgrade.pointsCost -> "upgrades.need-points"
+                    else -> "upgrades.ready"
+                }
+                add(DialogTextLayout.modelBody(texts.get(player, status)))
+            },
             buttons = buttons, exitButton = footer(player), columns = 1,
         ), reopen = { openUpgrades(player) })
     }
@@ -412,36 +457,75 @@ internal class TeamDialogs(
         ))
     }
 
-    private fun openLands(player: Player, notice: String? = null, pending: Boolean = false) {
+    private fun openLands(player: Player, notice: String? = null, pending: Boolean = false, requestedPage: Int = 0) {
         val team = teams.team(player.uniqueId) ?: return open(player)
         val linked = lands?.linked(team.landIds).orEmpty()
         val owned = lands?.ownedLands(player).orEmpty()
-        val rows = linked.map { land ->
-            value(land.name) to texts.get(player, "settlements.row", mapOf("members" to land.members))
-        }
-        val buttons = owned.mapIndexed { index, land ->
-            if (land.id in team.landIds) button("land_$index", player, "settlements.linked", values = mapOf("land" to land.name)) {
-                openUnlinkLand(player, land)
-            } else button("land_$index", player, "settlements.link", values = mapOf("land" to land.name), tooltipKey = "settlements.link-tooltip") {
-                val fresh = teams.team(player.uniqueId)
-                when {
-                    fresh?.id != team.id || lands?.ownedBy(land.id, player.uniqueId) != true -> openLands(player, "settlements.changed")
-                    !landBindings.add(land.id) -> openLands(player, "settlements.changed")
-                    else -> linkLand(player, team, land)
-                }
+        val available = linked + owned.filter { it.id !in team.landIds }
+        val pages = maxOf(1, (available.size + 7) / 8)
+        val page = requestedPage.coerceIn(0, pages - 1)
+        val listed = available.drop(page * 8).take(8)
+        val buttons = buildList {
+            listed.forEachIndexed { index, land ->
+                add(if (land.id in team.landIds) button("land_$index", player, "settlements.linked",
+                    "settlements.open-tooltip", mapOf("land" to land.name)) { openLand(player, land.id) }
+                else button("land_$index", player, "settlements.link", "settlements.link-tooltip", mapOf("land" to land.name)) {
+                    val fresh = teams.team(player.uniqueId)
+                    when {
+                        fresh?.id != team.id || lands?.ownedBy(land.id, player.uniqueId) != true -> openLands(player, "settlements.changed")
+                        !landBindings.add(land.id) -> openLands(player, "settlements.changed")
+                        else -> linkLand(player, team, land)
+                    }
+                })
             }
+            paging(player, page, pages, { openLands(player, requestedPage = it) }, this)
         }
         show(player, PaperDialogScreen(
             id = "arcjustteams.lands", title = texts.get(player, "settlements.title"),
             body = buildList {
                 noticeBody(player, notice)?.let(::add)
-                add(DialogTextLayout.modelBody(texts.get(player, "settlements.intro")))
                 if (lands == null) add(DialogTextLayout.modelBody(texts.get(player, "notice.integration-missing")))
-                else if (linked.isEmpty()) add(DialogTextLayout.modelBody(texts.get(player, "settlements.none")))
-                else add(DialogTables.body(rows, headers = null, frame = DialogTables.Frame.UNCOMMON, width = 320, columns = DialogTables.Columns.AUTO))
-                if (lands != null && owned.isEmpty()) add(DialogTextLayout.modelBody(texts.get(player, "settlements.empty")))
+                else {
+                    add(DialogTables.factsBody(listOf(
+                        field(player, "summary.lands", DialogDecoration.FieldIcon.LANDS) to value(linked.size),
+                        texts.get(player, "settlements.owned") to value(owned.count { it.id !in team.landIds }),
+                    ), DialogTables.FactsLayout.METRICS, DialogTables.PanelSpec(DialogTables.PanelSkin.EVERGREEN, 320, 2, true)))
+                    add(DialogTextLayout.modelBody(texts.get(player, "settlements.intro")))
+                    if (available.isEmpty()) add(DialogTextLayout.modelBody(texts.get(player, "settlements.empty")))
+                    if (pages > 1) add(DialogTextLayout.modelBody(texts.get(player, "settlements.page",
+                        mapOf("page" to page + 1, "pages" to pages))))
+                }
             }, buttons = buttons, exitButton = footer(player), columns = 2,
-        ), reopen = { openLands(player) }, pending = pending)
+        ), reopen = { openLands(player, requestedPage = page) }, pending = pending)
+    }
+
+    private fun openLand(player: Player, landId: String) {
+        val team = teams.team(player.uniqueId) ?: return open(player)
+        val land = lands?.linked(team.landIds)?.firstOrNull { it.id == landId }
+            ?: return openLands(player, "settlements.changed")
+        val owned = lands?.ownedBy(land.id, player.uniqueId) == true
+        show(player, PaperDialogScreen(
+            id = "arcjustteams.land", title = texts.get(player, "settlements.land-title", mapOf("land" to land.name)),
+            body = listOf(DialogTables.factsBody(listOf(
+                field(player, "settlements.residents", DialogDecoration.FieldIcon.PLAYER) to value(land.members),
+                texts.get(player, "settlements.your-role") to texts.get(player, if (owned) "settlements.owner" else "settlements.resident"),
+            ), DialogTables.FactsLayout.ROWS, DialogTables.PanelSpec(DialogTables.PanelSkin.EVERGREEN, 320, 1, true))),
+            buttons = buildList {
+                add(button("travel", player, "settlements.travel", "settlements.travel-tooltip",
+                    mapOf("land" to land.name)) { travelToLand(player, team.id, land.id) })
+                if (owned) add(button("unlink", player, "settlements.unlink-title") { openUnlinkLand(player, land) })
+            }, exitButton = footer(player), columns = 1,
+        ), reopen = { openLand(player, landId) })
+    }
+
+    private fun travelToLand(player: Player, expectedTeamId: Int, landId: String) {
+        val fresh = teams.team(player.uniqueId)
+        if (fresh?.id != expectedTeamId || landId !in fresh.landIds) {
+            open(player, "settlements.changed")
+            return
+        }
+        runtime.close(player)
+        if (lands?.travel(player, landId) != true) player.sendMessage(texts.get(player, "settlements.travel-unavailable"))
     }
 
     private fun linkLand(player: Player, team: TeamSnapshot, land: TeamLand) {
@@ -607,33 +691,110 @@ internal class TeamDialogs(
         ), reopen = { openAllies(player) })
     }
 
-    private fun openAddAlly(player: Player, notice: String? = null, initial: String = "", pending: Boolean = false) {
+    private fun openAddAlly(player: Player, query: String = "", requestedPage: Int = 0, notice: String? = null) {
+        val team = teams.team(player.uniqueId) ?: return open(player)
+        if (!teams.elevated(team, player.uniqueId)) return openAllies(player)
         show(player, PaperDialogScreen(
             id = "arcjustteams.allies.add", title = texts.get(player, "allies.add-title"),
-            body = listOfNotNull(noticeBody(player, notice), DialogTextLayout.modelBody(texts.get(player, "allies.add-body"))),
-            inputs = listOf(PaperDialogTextInput(TEAM_INPUT, texts.get(player, "allies.team-input"), initial, 300, 16)),
-            buttons = listOf(contextButton("send", player, "allies.send") { context ->
-                val name = context.text(TEAM_INPUT).orEmpty().trim()
-                val sourceTeam = teams.team(player.uniqueId) ?: return@contextButton open(player)
-                openAddAlly(player, initial = name, pending = true)
+            body = emptyList(),
+            inputs = listOf(PaperDialogTextInput(TEAM_INPUT, texts.get(player, "allies.team-input"), query, 300, 32)),
+            buttons = emptyList(), exitButton = footer(player), columns = 2,
+        ), pending = true)
+        val generation = visitGeneration(player)
+        val token = generation.current()
+        teams.browseTeamsAsync().thenApplyAsync({ all ->
+            all.withIndex().filter { (_, candidate) ->
+                allyCandidate(team, candidate) &&
+                    (query.isBlank() || candidate.name.contains(query, true) || candidate.tag.contains(query, true))
+            }
+        }, worker).whenCompleteSync(tasks) { candidates, failure ->
+            if (player.isOnline) generation.ifCurrent(token) {
+                val current = teams.team(player.uniqueId)
+                if (current?.id != team.id || !teams.elevated(current, player.uniqueId)) open(player)
+                else if (failure != null) openAllies(player, "allies.load-failed")
+                else presentAllyCandidates(player, current, candidates.orEmpty(), query, requestedPage, notice)
+            }
+        }
+    }
+
+    private fun presentAllyCandidates(player: Player, team: TeamSnapshot, candidates: List<IndexedValue<TeamBrowseSnapshot>>,
+        query: String, requestedPage: Int, notice: String?) {
+        val pages = maxOf(1, (candidates.size + 5) / 6)
+        val page = requestedPage.coerceIn(0, pages - 1)
+        val listed = candidates.drop(page * 6).take(6)
+        val buttons = buildList {
+            listed.forEachIndexed { index, ranked ->
+                val candidate = ranked.value
+                add(button("candidate_$index", player, "allies.candidate", "allies.candidate-tooltip", mapOf(
+                    "rank" to ranked.index + 1, "team" to candidate.name, "tag" to candidate.tag,
+                    "tier" to candidate.tier, "members" to candidate.members, "points" to numbers.format(candidate.points),
+                )) { openAllyProposal(player, team.id, candidate) })
+            }
+            add(contextButton("search", player, "allies.search") { context ->
+                openAddAlly(player, context.text(TEAM_INPUT).orEmpty().trim())
+            }.copy(width = 230))
+            if (query.isNotEmpty()) add(button("clear", player, "allies.clear") { openAddAlly(player) })
+            paging(player, page, pages, { openAddAlly(player, query, it) }, this)
+        }
+        show(player, PaperDialogScreen(
+            id = "arcjustteams.allies.add", title = texts.get(player, "allies.add-title"),
+            body = listOfNotNull(noticeBody(player, notice), DialogTextLayout.modelBody(texts.get(player,
+                if (listed.isEmpty()) "allies.candidates-empty" else "allies.add-body", mapOf("page" to page + 1, "pages" to pages)))),
+            inputs = listOf(PaperDialogTextInput(TEAM_INPUT, texts.get(player, "allies.team-input"), query, 300, 32)),
+            buttons = buttons, exitButton = footer(player), columns = 2,
+        ), reopen = { openAddAlly(player, query, page) })
+    }
+
+    private fun openAllyProposal(player: Player, sourceTeamId: Int, candidate: TeamBrowseSnapshot, pending: Boolean = false) {
+        val team = teams.team(player.uniqueId) ?: return open(player)
+        if (team.id != sourceTeamId || !teams.elevated(team, player.uniqueId) || !allyCandidate(team, candidate))
+            return openAllies(player, "allies.candidate-changed")
+        show(player, PaperDialogScreen(
+            id = "arcjustteams.allies.propose", title = texts.get(player, "allies.add-title"),
+            body = listOf(
+                DialogTextLayout.modelBody(texts.get(player, "allies.propose-body", mapOf("team" to candidate.name))),
+                DialogTables.factsBody(listOf(
+                    texts.get(player, "settings.tag") to value(candidate.tag),
+                    texts.get(player, "summary.tier") to value(candidate.tier),
+                    texts.get(player, "summary.points") to value(numbers.format(candidate.points)),
+                    texts.get(player, "summary.members") to value(candidate.members),
+                ), DialogTables.FactsLayout.ROWS, DialogTables.PanelSpec(DialogTables.PanelSkin.COCOA, 320, 2, true)),
+            ),
+            buttons = listOf(button("send", player, "allies.send") {
+                val fresh = teams.team(player.uniqueId)
+                if (fresh?.id != sourceTeamId || !teams.elevated(fresh, player.uniqueId) || !allyCandidate(fresh, candidate)) {
+                    openAllies(player, "allies.candidate-changed")
+                    return@button
+                }
+                openAllyProposal(player, sourceTeamId, candidate, pending = true)
                 val generation = visitGeneration(player)
                 val token = generation.current()
-                teams.browseTeamsAsync().thenApplyAsync({ all -> all.any { it.name.equals(name, true) } }, worker)
-                    .whenCompleteSync(tasks) { found, failure ->
-                    if (player.isOnline) generation.ifCurrent(token) {
-                        val currentTeam = teams.team(player.uniqueId)
-                        if (currentTeam?.id != sourceTeam.id || !teams.elevated(currentTeam, player.uniqueId)) open(player)
-                        else if (failure != null || found != true) openAddAlly(player, "allies.not-found", name)
-                        else {
-                            teams.sendAllyRequest(player, name)
-                            openAddAlly(player, initial = name, pending = true)
-                            runLaterOpen(player, 10L) { openAllies(player, "allies.sent") }
+                teams.browseTeamsAsync().thenApplyAsync({ all -> all.firstOrNull { it.id == candidate.id } }, worker)
+                    .whenCompleteSync(tasks) { target, failure ->
+                        if (player.isOnline) generation.ifCurrent(token) {
+                            val current = teams.team(player.uniqueId)
+                            when {
+                                current?.id != sourceTeamId || !teams.elevated(current, player.uniqueId) -> open(player)
+                                failure != null || target == null || target.name != candidate.name || !allyCandidate(current, target) ->
+                                    openAddAlly(player, notice = "allies.candidate-changed")
+                                else -> {
+                                    teams.sendAllyRequest(player, target.name)
+                                    runLaterOpen(player, 10L) {
+                                        val updated = teams.team(player.uniqueId)
+                                        openAllies(player, if (updated?.id == sourceTeamId && target.id in updated.sentAllyRequests)
+                                            "allies.sent" else "allies.not-sent")
+                                    }
+                                }
+                            }
                         }
                     }
-                }
             }), exitButton = footer(player), columns = 1,
         ), pending = pending)
     }
+
+    private fun allyCandidate(team: TeamSnapshot, candidate: TeamBrowseSnapshot): Boolean =
+        candidate.id != team.id && candidate.acceptsAllyRequests && candidate.id !in team.allies &&
+            candidate.id !in team.sentAllyRequests && candidate.id !in team.receivedAllyRequests
 
     private fun openAllyRequest(player: Player, id: Int, pending: Boolean = false) {
         val name = teams.teamName(id)
@@ -674,23 +835,102 @@ internal class TeamDialogs(
         ), reopen = { openQuests(player) })
     }
 
-    private fun openBuffs(player: Player) {
+    private fun openBuffs(player: Player, requestedPage: Int = 0, notice: String? = null) {
         val team = teams.team(player.uniqueId) ?: return open(player)
         val buffs = teams.buffs(team)
         val (maximum, nearby, radius) = teams.buffLimits()
-        val rows = buffs.map { buff ->
-            value(buff.display) to texts.get(player, if (buff.active) "buffs.active" else "buffs.available", mapOf("cost" to buff.pointsCost))
-        }
+        val pages = maxOf(1, (buffs.size + 7) / 8)
+        val page = requestedPage.coerceIn(0, pages - 1)
+        val listed = buffs.drop(page * 8).take(8)
         show(player, PaperDialogScreen(
             id = "arcjustteams.buffs", title = texts.get(player, "buffs.title"),
             body = buildList {
+                noticeBody(player, notice)?.let(::add)
+                add(DialogTables.factsBody(listOf(
+                    texts.get(player, "buffs.selected") to value("${buffs.count { it.active }} / $maximum"),
+                    texts.get(player, "summary.points") to value(numbers.format(team.points)),
+                ), DialogTables.FactsLayout.METRICS, DialogTables.PanelSpec(DialogTables.PanelSkin.PLUM, 320, 2, true)))
                 add(DialogTextLayout.modelBody(texts.get(player, "buffs.intro", mapOf("maximum" to maximum, "nearby" to nearby, "radius" to radius))))
-                add(DialogTextLayout.modelBody(texts.get(player, "buffs.read-only")))
-                if (rows.isEmpty()) add(DialogTextLayout.modelBody(texts.get(player, "buffs.empty")))
-                else add(DialogTables.body(rows, frame = DialogTables.Frame.EPIC, width = 320))
-            }, buttons = emptyList(), exitButton = footer(player), columns = 1,
-        ), reopen = { openBuffs(player) })
+                if (buffs.isEmpty()) add(DialogTextLayout.modelBody(texts.get(player, "buffs.empty")))
+                else if (!teams.buffEditingAvailable()) add(DialogTextLayout.modelBody(texts.get(player, "buffs.api-unavailable")))
+                else if (!teams.elevated(team, player.uniqueId)) add(DialogTextLayout.modelBody(texts.get(player, "buffs.owner-only")))
+            },
+            buttons = buildList {
+                listed.forEachIndexed { index, buff ->
+                    add(button("buff_$index", player, if (buff.active) "buffs.selected-choice" else "buffs.choice",
+                        if (buff.active) "buffs.selected-tooltip" else "buffs.choice-tooltip",
+                        mapOf("buff" to buffName(player, buff), "cost" to numbers.format(buff.pointsCost))) { openBuff(player, buff.id) })
+                }
+                paging(player, page, pages, { openBuffs(player, it) }, this)
+            }, exitButton = footer(player), columns = 2,
+        ), reopen = { openBuffs(player, page) })
     }
+
+    private fun openBuff(player: Player, buffId: String, notice: String? = null) {
+        val team = teams.team(player.uniqueId) ?: return open(player)
+        val buffs = teams.buffs(team)
+        val buff = buffs.firstOrNull { it.id == buffId } ?: return openBuffs(player, notice = "buffs.result.changed")
+        val (maximum, nearby, radius) = teams.buffLimits()
+        val restriction = when {
+            !teams.buffEditingAvailable() -> "buffs.api-unavailable"
+            !teams.elevated(team, player.uniqueId) -> "buffs.owner-only"
+            !buff.active && buffs.count { it.active } >= maximum -> "buffs.limit-reached"
+            !buff.active && team.points < buff.pointsCost -> "buffs.need-points"
+            else -> null
+        }
+        show(player, PaperDialogScreen(
+            id = "arcjustteams.buff", title = texts.get(player, "buffs.detail-title", mapOf("buff" to buffName(player, buff))),
+            body = buildList {
+                noticeBody(player, notice)?.let(::add)
+                buffDescription(player, buff)?.let { add(DialogTextLayout.modelBody(it)) }
+                add(DialogTables.factsBody(listOf(
+                    texts.get(player, "buffs.state") to texts.get(player, if (buff.active) "buffs.active" else "buffs.inactive"),
+                    texts.get(player, "buffs.activation-cost") to texts.get(player, "buffs.available", mapOf("cost" to numbers.format(buff.pointsCost))),
+                    texts.get(player, "summary.points") to value(numbers.format(team.points)),
+                ), DialogTables.FactsLayout.ROWS, DialogTables.PanelSpec(DialogTables.PanelSkin.PLUM, 320, 1, true)))
+                add(DialogTextLayout.modelBody(texts.get(player, "buffs.intro", mapOf("maximum" to maximum, "nearby" to nearby, "radius" to radius))))
+                if (buff.pointsCost > 0) add(DialogTextLayout.modelBody(texts.get(player, "buffs.repeat-cost")))
+                restriction?.let { add(DialogTextLayout.modelBody(texts.get(player, it))) }
+            },
+            buttons = if (restriction != null) emptyList() else listOf(
+                button("configure", player, if (buff.active) "buffs.disable-open" else "buffs.enable-open") {
+                    openBuffConfirm(player, team.id, buff)
+                },
+            ), exitButton = footer(player), columns = 1,
+        ), reopen = { openBuff(player, buffId) })
+    }
+
+    private fun openBuffConfirm(player: Player, teamId: Int, buff: TeamBuffSnapshot, pending: Boolean = false) {
+        show(player, PaperDialogScreen(
+            id = "arcjustteams.buff.confirm", title = texts.get(player, "buffs.detail-title", mapOf("buff" to buffName(player, buff))),
+            body = listOf(DialogTextLayout.modelBody(texts.get(player,
+                if (buff.active) "buffs.disable-confirm" else "buffs.enable-confirm",
+                mapOf("buff" to buffName(player, buff), "cost" to numbers.format(buff.pointsCost))))),
+            buttons = listOf(button("apply", player, if (buff.active) "buffs.disable" else "buffs.enable") {
+                val current = teams.team(player.uniqueId)
+                val fresh = current?.takeIf { it.id == teamId }?.let { teams.buffs(it).firstOrNull { item -> item.id == buff.id } }
+                if (fresh != buff) {
+                    openBuffs(player, notice = "buffs.result.changed")
+                    return@button
+                }
+                openBuffConfirm(player, teamId, buff, pending = true)
+                val generation = visitGeneration(player)
+                val token = generation.current()
+                teams.setBuff(player, teamId, buff.id, !buff.active, buff.pointsCost).whenCompleteSync(tasks) { result, failure ->
+                    if (player.isOnline) generation.ifCurrent(token) {
+                        val key = if (failure != null || result == null) "failed" else result.name.lowercase()
+                        openBuffs(player, notice = "buffs.result.$key")
+                    }
+                }
+            }), exitButton = footer(player), columns = 1,
+        ), pending = pending)
+    }
+
+    private fun buffName(player: Player, buff: TeamBuffSnapshot): String =
+        if (buff.id in LOCALIZED_BUFFS) texts.getPlain(player, "buffs.names.${buff.id}") else buff.display
+
+    private fun buffDescription(player: Player, buff: TeamBuffSnapshot): Component? =
+        if (buff.id in LOCALIZED_BUFFS) texts.get(player, "buffs.descriptions.${buff.id}") else null
 
     private fun confirm(
         player: Player,
@@ -761,14 +1001,21 @@ internal class TeamDialogs(
     }
 
     private fun noticeBody(player: Player, key: String?) = key?.let { DialogTextLayout.modelBody(texts.get(player, it)) }
+    private fun field(player: Player, key: String, icon: DialogDecoration.FieldIcon) =
+        DialogDecoration.fieldLabel(icon, texts.get(player, key))
     private fun stateKey(enabled: Boolean) = if (enabled) "state.on" else "state.off"
-    private fun upgradeCost(player: Player, upgrade: TeamUpgradeSnapshot): String = listOfNotNull(
-        upgrade.formattedMoneyCost?.takeIf { upgrade.moneyCost > 0 },
-        upgrade.pointsCost.takeIf { it > 0 }?.let { texts.getPlain(player, "upgrades.points-value", mapOf("points" to it)) },
-    ).joinToString(" + ")
+    private fun upgradeCost(player: Player, upgrade: TeamUpgradeSnapshot): Component {
+        val parts = buildList {
+            if (upgrade.moneyCost > 0) add(value("${numbers.format(upgrade.moneyCost)} 💰"))
+            if (upgrade.pointsCost > 0) add(texts.get(player, "upgrades.points-value", mapOf("points" to numbers.format(upgrade.pointsCost))))
+        }
+        return if (parts.isEmpty()) texts.get(player, "upgrades.free")
+        else parts.reduce { result, part -> result.append(value(" + ")).append(part) }
+    }
     private fun value(value: Any): Component = Component.text(value.toString(), NamedTextColor.WHITE)
 
     companion object {
+        private val LOCALIZED_BUFFS = setOf("regeneration", "speed", "haste", "resistance", "strength", "mining_xp", "fire_resistance")
         private val NAME_INPUT = PaperDialogInputId.of("name")
         private val TAG_INPUT = PaperDialogInputId.of("tag")
         private val PLAYER_INPUT = PaperDialogInputId.of("player")

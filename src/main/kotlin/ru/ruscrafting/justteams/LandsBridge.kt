@@ -17,7 +17,7 @@ internal data class TeamLand(
 
 internal data class LandSyncResult(val added: Int, val failed: Int)
 
-internal class LandsBridge(plugin: JavaPlugin, private val nativeWork: BudgetedTaskQueue) {
+internal class LandsBridge(private val plugin: JavaPlugin, private val nativeWork: BudgetedTaskQueue) {
     private val integration = LandsIntegration.of(plugin)
 
     fun ownedLands(player: Player): List<TeamLand> {
@@ -29,6 +29,17 @@ internal class LandsBridge(plugin: JavaPlugin, private val nativeWork: BudgetedT
     fun linked(ids: Set<String>): List<TeamLand> = ids.mapNotNull(::land).map(::snapshot).sortedBy { it.name.lowercase() }
 
     fun ownedBy(id: String, playerId: UUID): Boolean = land(id)?.let { it.exists() && it.ownerUID == playerId } == true
+
+    /** Delegates to Lands as the player, preserving its combat gate, fees, warmup and safe destination checks.
+     * True means the command was accepted; Lands reports the eventual teleport or refusal itself.
+     */
+    fun travel(player: Player, landId: String): Boolean {
+        check(plugin.server.isPrimaryThread) { "Settlement travel must start on the gameplay thread" }
+        if (!player.isOnline) return false
+        val target = land(landId) ?: return false
+        if (target.spawnPosition == null) return false
+        return plugin.server.dispatchCommand(player, "lands:lands spawn ${target.name}")
+    }
 
     /** Main-thread cursor; storage preparation suspends it and completion includes every native trust. */
     fun sync(

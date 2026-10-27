@@ -31,6 +31,8 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
     private var pluginRuntime: PaperPluginRuntime? = null
     private var storage: BoundedAsyncExecutor? = null
     private var nativeWork: BudgetedTaskQueue? = null
+    private var nameplates: TeamNameplateRuntime? = null
+    private var teamsRuntime: JustTeamsGateway? = null
     private var ready = false
     private val hotload = PaperPluginHotload(this, ::stopRuntime)
 
@@ -61,13 +63,15 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
 
     private fun finishEnable(lifecycle: PaperPluginRuntime, worker: BoundedAsyncExecutor, tasks: LifecycleTaskScope, texts: Texts) {
         val nativeWork = lifecycle.own(BudgetedTaskQueue(tasks)).also { this.nativeWork = it }
-        val teams = JustTeamsGateway(nativeWork, worker,
-            ru.arc.paper.player.PaperOfflinePlayerData.capture(server))
+        val teams = lifecycle.own(JustTeamsGateway(nativeWork, worker,
+            ru.arc.paper.player.PaperOfflinePlayerData.capture(server))).also { teamsRuntime = it }
         if (server.pluginManager.isPluginEnabled("ArcRanks")) ClanQuestMembershipBridge.install(this, teams)
         val minimum = config.getInt("elite-mobs.minimum-team-members", 2).coerceAtLeast(2)
         val dialogRuntime = lifecycle.own(PaperDialogRuntime(this))
         val lands = if (server.pluginManager.isPluginEnabled("Lands")) LandsBridge(this, nativeWork) else null
         val landReconciler = lands?.let { TeamLandReconciler(teams, it, tasks, logger) }
+        nameplates = lifecycle.own(TeamNameplateRuntime(this, teams, texts, BukkitTaskScheduler(this), nativeWork,
+            arcPvpNameplateCheck(this)))
         lateinit var activeDialogs: TeamDialogs
         val eliteMobsParty = EliteMobsPartyBridge.load()
         val dungeonParties = lifecycle.own(DungeonPartyCoordinator(
@@ -115,6 +119,8 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
         val queue = nativeWork.also { nativeWork = null }
         val runtime = pluginRuntime.also { pluginRuntime = null }
         val worker = storage.also { storage = null }
+        val plates = nameplates.also { nameplates = null }
+        val teams = teamsRuntime.also { teamsRuntime = null }
         var failure: Throwable? = null
         fun attempt(close: () -> Unit) {
             try { close() } catch (error: Throwable) {
@@ -130,7 +136,9 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
         attempt { hotload.retireGameplayRegistrations() }
         attempt { ru.arc.logging.ArcLogging.close() }
         return mapOf("runtime" to (failure?.let { CompletableFuture.failedFuture<Unit>(it) }
-            ?: CompletableFuture.completedFuture(Unit)))
+            ?: CompletableFuture.completedFuture(Unit)), "nameplates" to
+            (plates?.cleanup ?: CompletableFuture.completedFuture<Void>(null)), "buffs" to
+            (teams?.cleanup ?: CompletableFuture.completedFuture<Void>(null)))
     }
 
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {

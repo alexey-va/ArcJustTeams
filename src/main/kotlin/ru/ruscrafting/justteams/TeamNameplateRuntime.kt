@@ -1,0 +1,151 @@
+package ru.ruscrafting.justteams
+
+import org.bukkit.Color
+import org.bukkit.entity.Player
+import org.bukkit.event.EventHandler
+import org.bukkit.event.EventPriority
+import org.bukkit.event.HandlerList
+import org.bukkit.event.Listener
+import org.bukkit.event.player.PlayerQuitEvent
+import org.bukkit.plugin.Plugin
+import ru.arc.core.BudgetedTaskQueue
+import ru.arc.core.LifecycleTaskScope
+import ru.arc.core.TaskScheduler
+import ru.arc.nameplate.NameplateUpsertResult
+import ru.arc.nameplate.PlayerNameplateRegistry
+import ru.arc.paper.api.ArcNameplateClaim
+import ru.arc.paper.display.PaperPacketDisplays
+import ru.arc.paper.nameplate.NativePaperNameplateVisibilityPolicy
+import ru.arc.paper.nameplate.PacketPaperNameplateDisplayFactory
+import ru.arc.paper.nameplate.PaperNameplateOptions
+import ru.arc.paper.nameplate.PaperNameplateViewerContent
+import ru.arc.paper.nameplate.PaperNameplateVisibilityPolicy
+import ru.arc.paper.nameplate.PaperPlayerNameplates
+import java.util.concurrent.CompletableFuture
+import java.util.logging.Level
+
+/** Owns ordinary player plates; event claims suppress the complete ordinary plate for that target. */
+internal class TeamNameplateRuntime(
+    private val plugin: Plugin,
+    private val teams: JustTeamsGateway,
+    texts: Texts,
+    scheduler: TaskScheduler,
+    private val nativeWork: BudgetedTaskQueue,
+    pvpCheck: (Player, Player) -> TeamPvpState,
+) : AutoCloseable, Listener {
+    private val tasks = LifecycleTaskScope(scheduler)
+    private val registry = PlayerNameplateRegistry(MAX_TARGETS, 2, 160)
+    private val rows = TeamNameplateRows(texts)
+    private val policy = TeamPvpPolicy(pvpCheck)
+    private val packets = PaperPacketDisplays(plugin, "clan-nameplates", nativeWork)
+    private val options = clanNameplateOptions()
+    private val nativeVisibility = NativePaperNameplateVisibilityPolicy(options)
+    private var renderer: PaperPlayerNameplates? = null
+    private var refresh: CompletableFuture<Unit>? = null
+    private var refreshFailureReported = false
+    private var closed = false
+    var cleanup: CompletableFuture<Void> = CompletableFuture.completedFuture(null)
+        private set
+
+    init {
+        try {
+            renderer = PaperPlayerNameplates.openViewerScoped(
+                plugin, registry, options, scheduler, PacketPaperNameplateDisplayFactory(packets, options),
+                PaperNameplateVisibilityPolicy { viewer, target ->
+                    nativeVisibility.canView(viewer, target) && mayShowOrdinaryNameplate(plugin, target)
+                },
+                PaperNameplateViewerContent { viewer, target, common -> rows.forViewer(viewer, common, policy.evaluate(viewer, target)) },
+            )
+            plugin.server.pluginManager.registerEvents(this, plugin)
+            checkNotNull(tasks.runTimer(0L, options.reconcilePeriodTicks, ::refreshRows))
+        } catch (failure: Throwable) {
+            runCatching(::close).onFailure(failure::addSuppressed)
+            cleanup.whenComplete { _, cleanupFailure ->
+                if (cleanupFailure != null) plugin.logger.log(Level.WARNING, "Clan nameplate startup cleanup failed", cleanupFailure)
+            }
+            throw failure
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    fun onQuit(event: PlayerQuitEvent) {
+        registry.clearTarget(event.player.uniqueId)
+    }
+
+    private fun refreshRows() {
+        if (closed || refresh?.isDone == false) return
+        // The registry's existing 512-target bound also bounds the native player snapshot.
+        val players = plugin.server.onlinePlayers.take(MAX_TARGETS)
+        val ids = players.mapTo(hashSetOf()) { it.uniqueId }
+        (registry.targetIds() - ids).forEach(registry::clearTarget)
+        val pending = players.iterator()
+        refresh = nativeWork.submit({ !closed }) {
+            if (!pending.hasNext()) return@submit true
+            val player = pending.next()
+            if (player.isOnline) {
+                val current = rows.common(player, teams.nameplateTeam(player.uniqueId))
+                if (current.none { it.key == TeamNameplateRows.CLAN }) registry.remove(player.uniqueId, TeamNameplateRows.CLAN)
+                current.forEach { row ->
+                    val result = registry.upsert(player.uniqueId, row)
+                    check(result !is NameplateUpsertResult.Rejected) { "Clan nameplate ${row.key.value} rejected: $result" }
+                }
+            }
+            !pending.hasNext()
+        }.whenComplete { _, failure ->
+            if (!closed && failure != null && !refreshFailureReported) {
+                refreshFailureReported = true
+                plugin.logger.log(Level.WARNING, "Clan nameplate capture failed; previous rows will be retried", failure)
+            } else if (failure == null) refreshFailureReported = false
+        }
+    }
+
+    override fun close() {
+        if (closed) return
+        closed = true
+        var failure: Throwable? = null
+        fun attempt(action: () -> Unit) {
+            try { action() } catch (problem: Throwable) {
+                if (failure == null) failure = problem else if (problem !== failure) failure.addSuppressed(problem)
+            }
+        }
+        attempt { refresh?.cancel(false) }
+        attempt(tasks::close)
+        attempt { HandlerList.unregisterAll(this) }
+        attempt { renderer?.close() }
+        renderer = null
+        attempt { registry.clearOwner(TeamNameplateRows.OWNER) }
+        attempt {
+            try { cleanup = packets.closeAsync() } catch (problem: Throwable) {
+                cleanup = CompletableFuture.failedFuture(problem)
+                throw problem
+            }
+        }
+        failure?.let { throw it }
+    }
+
+    private companion object {
+        const val MAX_TARGETS = 512
+    }
+}
+
+/** Fail closed while an installed ArcEvents generation has not published its ownership contract. */
+internal fun mayShowOrdinaryNameplate(plugin: Plugin, target: Player): Boolean {
+    val claims = plugin.server.servicesManager.getRegistrations(ArcNameplateClaim::class.java)
+    if (plugin.server.pluginManager.isPluginEnabled("ArcEvents") && claims.none { it.plugin.name == "ArcEvents" }) return false
+    return claims.none { it.provider.owns(target.uniqueId) }
+}
+
+/** Shared by the runtime and the source-driven text preview. */
+internal fun clanNameplateOptions(): PaperNameplateOptions = PaperNameplateOptions(
+    reconcilePeriodTicks = 4L,
+    maxDistance = 32.0,
+    lineWidth = 256,
+    viewRange = 0.5F,
+    scale = 0.8F,
+    verticalOffset = 0.55F,
+    shadowed = false,
+    backgroundColor = Color.fromARGB(80, 11, 15, 18),
+    hideInvisibleTargets = true,
+    hideSpectatorTargets = true,
+    requireLineOfSight = true,
+)

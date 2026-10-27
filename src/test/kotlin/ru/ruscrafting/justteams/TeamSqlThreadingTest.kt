@@ -238,6 +238,9 @@ class SqlNativeTeam(val memberIds: MutableSet<UUID>) {
     fun getPlainName(): String { assertTrue(Bukkit.isPrimaryThread()); return "Team" }
     fun getPlainTag(): String { assertTrue(Bukkit.isPrimaryThread()); return "T" }
     fun isPublic(): Boolean { assertTrue(Bukkit.isPrimaryThread()); return true }
+    fun getPoints(): Long { assertTrue(Bukkit.isPrimaryThread()); return 0L }
+    fun getTier(): Int { assertTrue(Bukkit.isPrimaryThread()); return 1 }
+    fun acceptsRequests(): Boolean { assertTrue(Bukkit.isPrimaryThread()); return true }
     fun getMembers(): List<SqlNativeMember> {
         assertTrue(Bukkit.isPrimaryThread())
         return memberIds.map(::SqlNativeMember)
