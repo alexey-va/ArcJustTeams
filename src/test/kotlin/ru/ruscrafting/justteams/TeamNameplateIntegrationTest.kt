@@ -22,7 +22,7 @@ import kotlin.test.assertTrue
 
 class TeamNameplateIntegrationTest {
     @Test
-    fun `same player has private clan and unknown plates and an event claim removes both`() {
+    fun `clan and viewer scoped health occupy separate lanes and an event claim removes both`() {
         MockBukkitTestRuntime.open().use { paper ->
             val plugin = paper.createSimplePlugin("ArcJustTeamsIntegration")
             plugin.saveDefaultConfig()
@@ -30,41 +30,64 @@ class TeamNameplateIntegrationTest {
             val clanmate = paper.addPlayer("Clanmate")
             val stranger = paper.addPlayer("Stranger")
             val team = TeamNameplateTeam(10, "RUS", false, emptySet())
-            val protections = mutableMapOf(clanmate.uniqueId to TeamPvpState.CLAN)
+            val protections = mutableMapOf(clanmate.uniqueId to TeamPvpState.CLAN, stranger.uniqueId to TeamPvpState.ALLOWED)
             val rows = TeamNameplateRows(Texts(plugin))
-            val registry = PlayerNameplateRegistry()
-            rows.common(target, team).forEach { registry.upsert(target.uniqueId, it) }
-            val displays = RecordingPaperNameplateDisplayFactory()
+            val clanRegistry = PlayerNameplateRegistry(512, 1, 160)
+            val healthRegistry = PlayerNameplateRegistry(512, 1, 160)
+            rows.common(target, team).forEach {
+                (if (it.key == TeamNameplateRows.CLAN) clanRegistry else healthRegistry).upsert(target.uniqueId, it)
+            }
+            val clanDisplays = RecordingPaperNameplateDisplayFactory()
+            val healthDisplays = RecordingPaperNameplateDisplayFactory()
             val scheduler = TestTaskScheduler()
+            val visibility = PaperNameplateVisibilityPolicy { viewer, subject -> viewer != subject && mayShowOrdinaryNameplate(plugin, subject) }
+            val clanOptions = clanNameplateOptions()
+            val healthOptions = healthNameplateOptions()
+            assertTrue(clanOptions.verticalOffset > healthOptions.verticalOffset + 0.4F,
+                "The native nickname has a gap between the upper clan and lower health lanes")
             PaperPlayerNameplates.openViewerScoped(
-                plugin, registry, clanNameplateOptions(), scheduler, displays,
-                PaperNameplateVisibilityPolicy { viewer, subject -> viewer != subject && mayShowOrdinaryNameplate(plugin, subject) },
-                PaperNameplateViewerContent { viewer, subject, common ->
-                    assertEquals(target.uniqueId, subject.uniqueId)
-                    rows.forViewer(viewer, common, protections[viewer.uniqueId] ?: TeamPvpState.UNKNOWN)
-                },
-            ).use { renderer ->
-                renderer.refreshNow()
-                val clanPlate = displays.records.single { clanmate.uniqueId in it.shownTo }
-                val unknownPlate = displays.records.single { stranger.uniqueId in it.shownTo }
-                assertFalse(clanPlate === unknownPlate)
-                assertEquals(setOf(clanmate.uniqueId), clanPlate.shownTo)
-                assertEquals(setOf(stranger.uniqueId), unknownPlate.shownTo)
-                assertEquals(2, renderer.activeDisplayCount)
-                exportPreview(mapOf("clan" to clanPlate.contents.last(), "unknown" to unknownPlate.contents.last()), rows, target)
+                plugin, clanRegistry, clanOptions, scheduler, clanDisplays, visibility,
+                PaperNameplateViewerContent { _, _, common -> common },
+            ).use { clanRenderer ->
+                PaperPlayerNameplates.openViewerScoped(
+                    plugin, healthRegistry, healthOptions, scheduler, healthDisplays, visibility,
+                    PaperNameplateViewerContent { viewer, subject, common ->
+                        assertEquals(target.uniqueId, subject.uniqueId)
+                        rows.forViewer(viewer, common, protections[viewer.uniqueId] ?: TeamPvpState.UNKNOWN)
+                    },
+                ).use { healthRenderer ->
+                    clanRenderer.refreshNow()
+                    healthRenderer.refreshNow()
+                    val clanPlate = clanDisplays.records.single()
+                    val protectedPlate = healthDisplays.records.single { clanmate.uniqueId in it.shownTo }
+                    val allowedPlate = healthDisplays.records.single { stranger.uniqueId in it.shownTo }
+                    assertFalse(protectedPlate === allowedPlate)
+                    assertEquals(setOf(clanmate.uniqueId, stranger.uniqueId), clanPlate.shownTo)
+                    assertEquals(setOf(clanmate.uniqueId), protectedPlate.shownTo)
+                    assertEquals(setOf(stranger.uniqueId), allowedPlate.shownTo)
+                    assertEquals("[RUS]", plain(clanPlate.contents.last()))
+                    assertEquals("20/20 ❤ · ⛨", plain(protectedPlate.contents.last()))
+                    assertEquals("20/20 ❤ · ⚔", plain(allowedPlate.contents.last()))
+                    assertEquals(1, clanRenderer.activeDisplayCount)
+                    assertEquals(2, healthRenderer.activeDisplayCount)
+                    exportPreview(mapOf("clan" to clanPlate.contents.last(), "health-protected" to protectedPlate.contents.last(),
+                        "health-allowed" to allowedPlate.contents.last()), rows, target)
 
-                protections[stranger.uniqueId] = TeamPvpState.CLAN
-                renderer.refreshNow()
-                assertEquals(1, renderer.activeDisplayCount)
-                assertEquals(setOf(clanmate.uniqueId, stranger.uniqueId), displays.records.single { !it.closed }.shownTo)
-                assertTrue(unknownPlate.closed)
+                    protections[stranger.uniqueId] = TeamPvpState.CLAN
+                    healthRenderer.refreshNow()
+                    assertEquals(1, healthRenderer.activeDisplayCount)
+                    assertEquals(setOf(clanmate.uniqueId, stranger.uniqueId), healthDisplays.records.single { !it.closed }.shownTo)
+                    assertTrue(allowedPlate.closed)
 
-                val events = paper.createSimplePlugin("ArcEvents")
-                val claim = ArcNameplateClaim { it == target.uniqueId }
-                paper.server.servicesManager.register(ArcNameplateClaim::class.java, claim, events, ServicePriority.Normal)
-                renderer.refreshNow()
-                assertEquals(0, renderer.activeDisplayCount)
-                assertTrue(displays.records.all { it.closed })
+                    val events = paper.createSimplePlugin("ArcEvents")
+                    val claim = ArcNameplateClaim { it == target.uniqueId }
+                    paper.server.servicesManager.register(ArcNameplateClaim::class.java, claim, events, ServicePriority.Normal)
+                    clanRenderer.refreshNow()
+                    healthRenderer.refreshNow()
+                    assertEquals(0, clanRenderer.activeDisplayCount)
+                    assertEquals(0, healthRenderer.activeDisplayCount)
+                    assertTrue((clanDisplays.records + healthDisplays.records).all { it.closed })
+                }
             }
         }
     }
@@ -76,12 +99,8 @@ class TeamNameplateIntegrationTest {
     ) {
         val directory = System.getenv("ARC_NAMEPLATE_PREVIEW_DIR")?.let(Path::of) ?: return
         Files.createDirectories(directory)
-        val common = Component.join(net.kyori.adventure.text.JoinConfiguration.newlines(), rows.common(player,
-            TeamNameplateTeam(10, "RUS", false, emptySet())).map { it.content })
-        val samples = frames + mapOf(
-            "ally" to rows.forViewer(player, common, TeamPvpState.ALLY),
-            "lands" to rows.forViewer(player, common, TeamPvpState.LANDS),
-        )
+        val health = rows.common(player, null).single().content
+        val samples = frames + ("health-unknown" to rows.forViewer(player, health, TeamPvpState.UNKNOWN))
         Files.writeString(directory.resolve("frames.tsv"), samples.entries.joinToString("\n") { (name, component) ->
             val mini = MiniMessage.miniMessage().serialize(component)
             val encoded = Base64.getEncoder().encodeToString(mini.toByteArray(Charsets.UTF_8))
@@ -89,6 +108,8 @@ class TeamNameplateIntegrationTest {
         })
         val options = clanNameplateOptions()
         Files.writeString(directory.resolve("geometry.tsv"),
-            "scale\t${options.scale}\nvertical-offset\t${options.verticalOffset}\nline-width\t${options.lineWidth}\nbackground-argb\t${options.backgroundColor.asARGB()}")
+            "scale\t${options.scale}\nclan-vertical-offset\t${options.verticalOffset}\nhealth-vertical-offset\t${healthNameplateOptions().verticalOffset}\nline-width\t${options.lineWidth}\nbackground-argb\t${options.backgroundColor.asARGB()}")
     }
+
+    private fun plain(component: Component) = PlainTextComponentSerializer.plainText().serialize(component)
 }

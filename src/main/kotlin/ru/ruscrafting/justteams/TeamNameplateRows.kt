@@ -8,7 +8,7 @@ import ru.arc.nameplate.NameplateLayer
 import ru.arc.nameplate.NameplateLayerKey
 import kotlin.math.ceil
 
-/** Two extra rows above the native TAB identity; PvP is resolved separately for each observer. */
+/** Clan sits above the native TAB identity, health below; PvP is resolved for each observer. */
 internal class TeamNameplateRows(private val texts: Texts) {
     fun common(target: Player, team: TeamNameplateTeam?): List<NameplateLayer> = buildList {
         val tag = team?.tag?.filterNot(Char::isISOControl)?.trim()?.take(64).orEmpty()

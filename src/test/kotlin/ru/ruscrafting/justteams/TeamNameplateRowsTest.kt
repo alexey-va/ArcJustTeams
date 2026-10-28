@@ -1,13 +1,11 @@
 package ru.ruscrafting.justteams
 
 import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.format.TextColor
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
-import ru.arc.nameplate.PlayerNameplateRegistry
 import ru.arc.paper.testing.MockBukkitTestRuntime
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 
 class TeamNameplateRowsTest {
     @Test
@@ -20,16 +18,35 @@ class TeamNameplateRowsTest {
             target.health = 18.25
             val rows = TeamNameplateRows(Texts(plugin))
             val team = TeamNameplateTeam(1, "<red>TAG", false, emptySet())
-            val registry = PlayerNameplateRegistry()
-            rows.common(target, team).forEach { registry.upsert(target.uniqueId, it) }
-            val common = requireNotNull(registry.snapshot(target.uniqueId)).content
+            val commonRows = rows.common(target, team)
+            val common = commonRows.single { it.key == TeamNameplateRows.HEALTH }.content
 
-            assertEquals("[<red>TAG]\n19/20 ❤", plain(common), "A team tag must remain literal text")
-            val friend = plain(rows.forViewer(viewer, common, TeamPvpState.CLAN))
-            val stranger = plain(rows.forViewer(viewer, common, TeamPvpState.UNKNOWN))
-            assertTrue(friend.startsWith("[<red>TAG]\n19/20 ❤ · "))
-            assertFalse(friend == stranger)
-            assertEquals(1, friend.count { it == '\n' }, "No duplicate native nickname or accidental third extra line")
+            assertEquals("[<red>TAG]", plain(commonRows.single { it.key == TeamNameplateRows.CLAN }.content),
+                "A team tag must remain literal text in its own upper row")
+            assertEquals("19/20 ❤", plain(common))
+            val pvpIcons = mapOf(
+                TeamPvpState.ALLOWED to "⚔",
+                TeamPvpState.WORLD to "⛨",
+                TeamPvpState.CLAN to "⛨",
+                TeamPvpState.ALLY to "⛨",
+                TeamPvpState.PROTECTED to "⛨",
+                TeamPvpState.LANDS to "⛨",
+                TeamPvpState.UNKNOWN to "?",
+            )
+            for (locale in listOf("ru", "en")) {
+                plugin.config.set("locale.default", locale)
+                for ((state, icon) in pvpIcons) {
+                    val content = rows.forViewer(viewer, common, state)
+                    assertEquals("19/20 ❤ · $icon", plain(content),
+                        "$locale/$state must append one icon without PvP prose or an extra row")
+                    val color = when (state) {
+                        TeamPvpState.ALLOWED -> 0xff6b61
+                        TeamPvpState.UNKNOWN -> 0xe8dfd2
+                        else -> 0x9bd48d
+                    }
+                    assertEquals(TextColor.color(color), content.children().last().color(), "$locale/$state icon color")
+                }
+            }
             assertEquals(listOf(TeamNameplateRows.HEALTH), rows.common(target, null).map { it.key })
         }
     }

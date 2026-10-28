@@ -34,13 +34,17 @@ internal class TeamNameplateRuntime(
     pvpCheck: (Player, Player) -> TeamPvpState,
 ) : AutoCloseable, Listener {
     private val tasks = LifecycleTaskScope(scheduler)
-    private val registry = PlayerNameplateRegistry(MAX_TARGETS, 2, 160)
+    private val clanRegistry = PlayerNameplateRegistry(MAX_TARGETS, 1, 160)
+    private val healthRegistry = PlayerNameplateRegistry(MAX_TARGETS, 1, 160)
+    private val registries = listOf(clanRegistry, healthRegistry)
     private val rows = TeamNameplateRows(texts)
     private val policy = TeamPvpPolicy(pvpCheck)
     private val packets = PaperPacketDisplays(plugin, "clan-nameplates", nativeWork)
-    private val options = clanNameplateOptions()
-    private val nativeVisibility = NativePaperNameplateVisibilityPolicy(options)
-    private var renderer: PaperPlayerNameplates? = null
+    private val clanOptions = clanNameplateOptions()
+    private val healthOptions = healthNameplateOptions()
+    private val nativeVisibility = NativePaperNameplateVisibilityPolicy(clanOptions)
+    private var clanRenderer: PaperPlayerNameplates? = null
+    private var healthRenderer: PaperPlayerNameplates? = null
     private var refresh: CompletableFuture<Unit>? = null
     private var refreshFailureReported = false
     private var closed = false
@@ -49,15 +53,20 @@ internal class TeamNameplateRuntime(
 
     init {
         try {
-            renderer = PaperPlayerNameplates.openViewerScoped(
-                plugin, registry, options, scheduler, PacketPaperNameplateDisplayFactory(packets, options),
-                PaperNameplateVisibilityPolicy { viewer, target ->
-                    nativeVisibility.canView(viewer, target) && mayShowOrdinaryNameplate(plugin, target)
-                },
+            val visibility = PaperNameplateVisibilityPolicy { viewer, target ->
+                nativeVisibility.canView(viewer, target) && mayShowOrdinaryNameplate(plugin, target)
+            }
+            // Both lanes share one packet owner so their passenger IDs are sent together.
+            clanRenderer = PaperPlayerNameplates.openViewerScoped(
+                plugin, clanRegistry, clanOptions, scheduler, PacketPaperNameplateDisplayFactory(packets, clanOptions), visibility,
+                PaperNameplateViewerContent { _, _, common -> common },
+            )
+            healthRenderer = PaperPlayerNameplates.openViewerScoped(
+                plugin, healthRegistry, healthOptions, scheduler, PacketPaperNameplateDisplayFactory(packets, healthOptions), visibility,
                 PaperNameplateViewerContent { viewer, target, common -> rows.forViewer(viewer, common, policy.evaluate(viewer, target)) },
             )
             plugin.server.pluginManager.registerEvents(this, plugin)
-            checkNotNull(tasks.runTimer(0L, options.reconcilePeriodTicks, ::refreshRows))
+            checkNotNull(tasks.runTimer(0L, clanOptions.reconcilePeriodTicks, ::refreshRows))
         } catch (failure: Throwable) {
             runCatching(::close).onFailure(failure::addSuppressed)
             cleanup.whenComplete { _, cleanupFailure ->
@@ -69,7 +78,7 @@ internal class TeamNameplateRuntime(
 
     @EventHandler(priority = EventPriority.MONITOR)
     fun onQuit(event: PlayerQuitEvent) {
-        registry.clearTarget(event.player.uniqueId)
+        registries.forEach { it.clearTarget(event.player.uniqueId) }
     }
 
     private fun refreshRows() {
@@ -77,15 +86,16 @@ internal class TeamNameplateRuntime(
         // The registry's existing 512-target bound also bounds the native player snapshot.
         val players = plugin.server.onlinePlayers.take(MAX_TARGETS)
         val ids = players.mapTo(hashSetOf()) { it.uniqueId }
-        (registry.targetIds() - ids).forEach(registry::clearTarget)
+        registries.forEach { registry -> (registry.targetIds() - ids).forEach(registry::clearTarget) }
         val pending = players.iterator()
         refresh = nativeWork.submit({ !closed }) {
             if (!pending.hasNext()) return@submit true
             val player = pending.next()
             if (player.isOnline) {
                 val current = rows.common(player, teams.nameplateTeam(player.uniqueId))
-                if (current.none { it.key == TeamNameplateRows.CLAN }) registry.remove(player.uniqueId, TeamNameplateRows.CLAN)
+                if (current.none { it.key == TeamNameplateRows.CLAN }) clanRegistry.remove(player.uniqueId, TeamNameplateRows.CLAN)
                 current.forEach { row ->
+                    val registry = if (row.key == TeamNameplateRows.CLAN) clanRegistry else healthRegistry
                     val result = registry.upsert(player.uniqueId, row)
                     check(result !is NameplateUpsertResult.Rejected) { "Clan nameplate ${row.key.value} rejected: $result" }
                 }
@@ -111,9 +121,11 @@ internal class TeamNameplateRuntime(
         attempt { refresh?.cancel(false) }
         attempt(tasks::close)
         attempt { HandlerList.unregisterAll(this) }
-        attempt { renderer?.close() }
-        renderer = null
-        attempt { registry.clearOwner(TeamNameplateRows.OWNER) }
+        attempt { clanRenderer?.close() }
+        clanRenderer = null
+        attempt { healthRenderer?.close() }
+        healthRenderer = null
+        registries.forEach { registry -> attempt { registry.clearOwner(TeamNameplateRows.OWNER) } }
         attempt {
             try { cleanup = packets.closeAsync() } catch (problem: Throwable) {
                 cleanup = CompletableFuture.failedFuture(problem)
@@ -135,14 +147,19 @@ internal fun mayShowOrdinaryNameplate(plugin: Plugin, target: Player): Boolean {
     return claims.none { it.provider.owns(target.uniqueId) }
 }
 
-/** Shared by the runtime and the source-driven text preview. */
-internal fun clanNameplateOptions(): PaperNameplateOptions = PaperNameplateOptions(
+/** Separate lanes leave the vanilla/TAB nickname between the clan and health rows. */
+internal fun clanNameplateOptions(): PaperNameplateOptions = nameplateOptions(0.55F)
+
+internal fun healthNameplateOptions(): PaperNameplateOptions = nameplateOptions(0.05F)
+
+/** Shared passenger-local geometry for runtime rendering and the source-driven preview. */
+private fun nameplateOptions(verticalOffset: Float): PaperNameplateOptions = PaperNameplateOptions(
     reconcilePeriodTicks = 4L,
     maxDistance = 32.0,
     lineWidth = 256,
     viewRange = 0.5F,
     scale = 0.8F,
-    verticalOffset = 0.55F,
+    verticalOffset = verticalOffset,
     shadowed = false,
     backgroundColor = Color.fromARGB(80, 11, 15, 18),
     hideInvisibleTargets = true,

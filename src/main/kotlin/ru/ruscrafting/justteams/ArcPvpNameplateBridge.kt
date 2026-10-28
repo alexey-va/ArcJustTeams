@@ -17,8 +17,9 @@ internal class ArcPvpNameplateBridge(private val plugin: Plugin) {
             ArcPvpService.Result.TEAM, ArcPvpService.Result.TEAM_PROJECTILE,
             ArcPvpService.Result.TEAM_TNT -> TeamPvpState.CLAN
             ArcPvpService.Result.ALLY -> TeamPvpState.ALLY
-            // ALLOWED covers only ARC's settlement/clan policy, not CMI, regions, scripts or minigames.
-            ArcPvpService.Result.ALLOWED, ArcPvpService.Result.UNAVAILABLE, null -> TeamPvpState.UNKNOWN
+            // The icon reflects ARC's settlement/clan policy, not unrelated combat plugins.
+            ArcPvpService.Result.ALLOWED -> TeamPvpState.ALLOWED
+            ArcPvpService.Result.UNAVAILABLE, null -> TeamPvpState.UNKNOWN
         }
     } catch (failure: RuntimeException) {
         unavailable(failure)

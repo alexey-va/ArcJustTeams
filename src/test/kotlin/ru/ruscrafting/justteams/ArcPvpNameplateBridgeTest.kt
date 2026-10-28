@@ -13,7 +13,7 @@ import kotlin.test.assertEquals
 
 class ArcPvpNameplateBridgeTest {
     @Test
-    fun `authoritative denials use exact melee source and allowed remains unverified`() {
+    fun `authoritative results use exact melee source and distinguish allowed from unavailable`() {
         val services = mockk<ServicesManager>()
         val plugin = plugin(services)
         val provider = mockk<ArcPvpService>()
@@ -27,7 +27,7 @@ class ArcPvpNameplateBridgeTest {
             ArcPvpService.Result.ALLY to TeamPvpState.ALLY,
             ArcPvpService.Result.TEAM_PROJECTILE to TeamPvpState.CLAN,
             ArcPvpService.Result.TEAM_TNT to TeamPvpState.CLAN,
-            ArcPvpService.Result.ALLOWED to TeamPvpState.UNKNOWN,
+            ArcPvpService.Result.ALLOWED to TeamPvpState.ALLOWED,
             ArcPvpService.Result.UNAVAILABLE to TeamPvpState.UNKNOWN,
         )
         cases.forEach { (result, expected) ->

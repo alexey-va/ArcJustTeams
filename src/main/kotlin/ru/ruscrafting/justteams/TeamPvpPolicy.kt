@@ -7,6 +7,7 @@ import org.bukkit.plugin.Plugin
 
 /** A denial is authoritative; lack of a known denial is not permission from every combat plugin. */
 internal enum class TeamPvpState(val localeKey: String) {
+    ALLOWED("nameplate.pvp-allowed"),
     WORLD("nameplate.pvp-world"),
     CLAN("nameplate.pvp-clan"),
     ALLY("nameplate.pvp-ally"),
