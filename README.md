@@ -22,7 +22,7 @@ remain available. There is no plugin reload command; apply file changes with the
 next server restart.
 
 Build with `../ArcGiveaways/gradlew check`. The shaded plugin is written to
-`build/libs/ArcJustTeams-0.3.24.jar`. Delayed post-action refreshes are bound to
+`build/libs/ArcJustTeams-0.3.25.jar`. Delayed post-action refreshes are bound to
 the current native-dialog visit and are ignored after navigation or dismissal;
 ordinary internal transitions keep the dialog window open.
 

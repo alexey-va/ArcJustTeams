@@ -150,7 +150,7 @@ internal fun mayShowOrdinaryNameplate(plugin: Plugin, target: Player): Boolean {
 /** Separate lanes leave the vanilla/TAB nickname between the clan and health rows. */
 internal fun clanNameplateOptions(): PaperNameplateOptions = nameplateOptions(0.55F)
 
-internal fun healthNameplateOptions(): PaperNameplateOptions = nameplateOptions(0.05F)
+internal fun healthNameplateOptions(): PaperNameplateOptions = nameplateOptions(0.12F)
 
 /** Shared passenger-local geometry for runtime rendering and the source-driven preview. */
 private fun nameplateOptions(verticalOffset: Float): PaperNameplateOptions = PaperNameplateOptions(
