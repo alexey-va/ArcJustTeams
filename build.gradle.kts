@@ -67,6 +67,7 @@ tasks {
         exclude("ru/arc/paper/redis/SharedPaperRedisService*.class")
         exclude("ru/arc/paper/metrics/PaperArcMetricsProvider*.class")
         exclude("ru/arc/paper/packet/PaperVisualPacketRuntime*.class")
+        exclude("ru/arc/paper/display/PaperDisplayPassengerServiceProvider*.class")
         exclude("ru/arc/paper/scene/PaperSceneEntityInfoServiceProvider*.class")
         exclude("ru/arc/paper/scene/PaperSceneObservationServiceProvider*.class")
         exclude("ru/arc/paper/runtime/PaperNativeCleanupServiceProvider*.class")
