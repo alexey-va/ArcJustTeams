@@ -4,7 +4,7 @@ main: ru.ruscrafting.justteams.ArcJustTeamsPlugin
 api-version: '1.21.11'
 authors: [RusCrafting]
 description: Native team hub and Lands/EliteMobs bridge
-depend: [justTeams, ArcCore, packetevents]
+depend: [justTeams, ArcCore, packetevents, PlaceholderAPI]
 softdepend: [ARC, Lands, EliteMobs, ArcRanks, ArcEvents]
 commands:
   clans:

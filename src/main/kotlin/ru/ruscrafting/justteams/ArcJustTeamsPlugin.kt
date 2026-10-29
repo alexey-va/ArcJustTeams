@@ -31,9 +31,9 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
     private var pluginRuntime: PaperPluginRuntime? = null
     private var storage: BoundedAsyncExecutor? = null
     private var nativeWork: BudgetedTaskQueue? = null
-    private var nameplates: TeamNameplateRuntime? = null
+    @Volatile private var nameplates: TeamNameplateRuntime? = null
     private var teamsRuntime: JustTeamsGateway? = null
-    private var ready = false
+    @Volatile private var ready = false
     private val hotload = PaperPluginHotload(this, ::stopRuntime)
 
     override fun onEnable() {
@@ -71,7 +71,10 @@ open class ArcJustTeamsPlugin : JavaPlugin(), Listener, CommandExecutor {
         val lands = if (server.pluginManager.isPluginEnabled("Lands")) LandsBridge(this, nativeWork) else null
         val landReconciler = lands?.let { TeamLandReconciler(teams, it, tasks, logger) }
         nameplates = lifecycle.own(TeamNameplateRuntime(this, teams, texts, BukkitTaskScheduler(this), nativeWork,
-            arcPvpNameplateCheck(this)))
+            arcPvpNameplateCheck(this), ::teamNameplateIdentity))
+        lifecycle.own(TeamNameplateExpansion(this) { playerId -> ready && nameplates?.ownsIdentity(playerId) == true }).also {
+            check(it.register()) { "PlaceholderAPI rejected ArcJustTeams nameplate expansion registration" }
+        }
         lateinit var activeDialogs: TeamDialogs
         val eliteMobsParty = EliteMobsPartyBridge.load()
         val dungeonParties = lifecycle.own(DungeonPartyCoordinator(

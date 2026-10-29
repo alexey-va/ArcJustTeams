@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "ru.ruscrafting"
-version = "0.3.26"
+version = "0.3.27"
 description = "Native team hub and Lands/EliteMobs bridge for justTeams"
 
 repositories {
@@ -17,6 +17,7 @@ repositories {
     }
     maven("https://repo.papermc.io/repository/maven-public/")
     maven("https://jitpack.io")
+    maven("https://repo.extendedclip.com/content/repositories/placeholderapi/")
 }
 
 java { toolchain { languageVersion.set(JavaLanguageVersion.of(25)) } }
@@ -24,25 +25,27 @@ kotlin { jvmToolchain(25) }
 
 dependencies {
     implementation(kotlin("stdlib"))
-    implementation("ru.ruscrafting.arc:arc-core:2.7.76")
-    implementation("ru.ruscrafting.arc:arc-core-logging:2.7.76")
-    implementation("ru.ruscrafting.arc:arc-core-paper:2.7.76")
-    implementation("ru.ruscrafting.arc:arc-core-menu:2.7.76")
-    implementation("ru.ruscrafting.arc:arc-core-paper-menu:2.7.76")
-    compileOnly("ru.ruscrafting.arc:arc-core-paper-api:2.7.76")
+    implementation("ru.ruscrafting.arc:arc-core:2.7.77")
+    implementation("ru.ruscrafting.arc:arc-core-logging:2.7.77")
+    implementation("ru.ruscrafting.arc:arc-core-paper:2.7.77")
+    implementation("ru.ruscrafting.arc:arc-core-menu:2.7.77")
+    implementation("ru.ruscrafting.arc:arc-core-paper-menu:2.7.77")
+    compileOnly("ru.ruscrafting.arc:arc-core-paper-api:2.7.77")
     compileOnly("io.papermc.paper:paper-api:1.21.11-R0.1-SNAPSHOT")
     compileOnly("com.github.angeschossen:LandsAPI:7.25.4")
     compileOnly("ru.ruscrafting.thirdparty:elitemobs-api:10.1.1")
     compileOnly("ru.ruscrafting.arc:arc-ranks-api:0.1.3")
     compileOnly("ru.ruscrafting.arc:arc-dungeons-api:0.1.2")
+    compileOnly("me.clip:placeholderapi:2.11.5")
 
     testImplementation(kotlin("test"))
-    testImplementation("ru.ruscrafting.arc:arc-core-paper-testing:2.7.76")
-    testImplementation("ru.ruscrafting.arc:arc-core-paper-api:2.7.76")
+    testImplementation("ru.ruscrafting.arc:arc-core-paper-testing:2.7.77")
+    testImplementation("ru.ruscrafting.arc:arc-core-paper-api:2.7.77")
     testImplementation("io.mockk:mockk:1.14.7")
     testImplementation("com.github.angeschossen:LandsAPI:7.25.4")
     testImplementation("ru.ruscrafting.arc:arc-ranks-api:0.1.3")
     testImplementation("ru.ruscrafting.arc:arc-dungeons-api:0.1.2")
+    testImplementation("me.clip:placeholderapi:2.11.5")
 }
 
 tasks {

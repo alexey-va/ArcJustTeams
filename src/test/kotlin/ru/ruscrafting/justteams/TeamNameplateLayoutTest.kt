@@ -10,40 +10,44 @@ import kotlin.test.assertTrue
 
 class TeamNameplateLayoutTest {
     @Test
-    fun `extra rows clear native font and rank badge bounds in every camera orientation`() {
-        val clan = clanNameplateOptions()
-        val health = healthNameplateOptions()
-        // Mojang 1.21.11 NameTagFeatureRenderer.Storage and TextDisplayRenderer background bounds.
-        // Survival rank_count is height 10 / ascent 9: baseline 7 puts its top at -2 px.
-        // Union with the native background therefore reaches 2 px above the name anchor.
-        val nativeBottom = -9 * FONT_PIXEL
-        val nativeTop = 2 * FONT_PIXEL
-        val clanBottom = clan.verticalOffset
-        val healthTop = health.verticalOffset + 10 * FONT_PIXEL * health.scale
-        for (mode in CameraMode.entries) {
-            for (yaw in listOf(0F, 73F, 180F)) {
-                for (pitch in listOf(-75F, -30F, 0F, 30F, 75F)) {
-                    val camera = cameraRotation(mode, yaw, pitch)
-                    val context = "$mode yaw=$yaw pitch=$pitch"
-                    assertTrue(screenUp(clanBottom, camera) - screenUp(nativeTop, camera) >= 0.049F, context)
-                    assertTrue(screenUp(nativeBottom, camera) - screenUp(healthTop, camera) >= FONT_PIXEL, context)
+    fun `one plane keeps rank clan nickname and health glyph bands separate`() {
+        val options = teamNameplateOptions()
+        // Pinned 1.21.11 TextDisplayRenderer advances by font.lineHeight + 1 = 10 px.
+        // Live Survival rank_count height 10 / ascent 9 starts at baseline 7 - 9 = -2 px.
+        // Bounds include a one-pixel text shadow; the shield is one pixel taller than text.
+        for (hasClan in listOf(false, true)) {
+            val glyphs = buildList {
+                add(-2F to 9F) // Rank badge, including its shadow.
+                if (hasClan) add(0F to 8F)
+                add(0F to 8F) // Real nickname.
+                add(0F to 9F) // Health and shield.
+            }.mapIndexed { line, (top, bottom) -> (line * LINE_STRIDE + top) to (line * LINE_STRIDE + bottom) }
+            for (mode in CameraMode.entries) {
+                for (yaw in listOf(0F, 73F, 180F)) {
+                    for (pitch in listOf(-75F, -30F, 0F, 30F, 75F)) {
+                        val camera = cameraRotation(mode, yaw, pitch)
+                        for ((upper, lower) in glyphs.zipWithNext()) {
+                            val upperBottom = screenUp(upper.second, glyphs.size, camera)
+                            val lowerTop = screenUp(lower.first, glyphs.size, camera)
+                            assertTrue(upperBottom - lowerTop >= FONT_PIXEL * options.scale - 0.0001F,
+                                "hasClan=$hasClan $mode yaw=$yaw pitch=$pitch keeps at least one font pixel between rows")
+                        }
+                    }
                 }
             }
         }
     }
 
     @Test
-    fun `lower row leaves head clearance for ordinary viewing angles and both rows stay lit`() {
-        val health = healthNameplateOptions()
-        for (pitch in listOf(-30.0, 0.0, 30.0)) {
-            val projectedHeadClearance = 0.5 * cos(Math.toRadians(pitch)) + health.verticalOffset
-            assertTrue(projectedHeadClearance > 0.015, "pitch=$pitch lower background clears head origin")
+    fun `whole plate clears the head at ordinary angles and remains lit in darkness`() {
+        val options = teamNameplateOptions()
+        for (pitch in listOf(-45.0, -30.0, 0.0, 30.0, 45.0)) {
+            val projectedHeadClearance = 0.5 * cos(Math.toRadians(pitch)) + options.verticalOffset
+            assertTrue(projectedHeadClearance > 0.15, "pitch=$pitch lower background clears head origin")
         }
-        for (options in listOf(clanNameplateOptions(), health)) {
-            assertTrue(options.shadowed)
-            assertEquals(Display.Brightness(15, 15), options.brightness,
-                "Nameplate text must retain its own light level in a dark cave")
-        }
+        assertTrue(options.shadowed)
+        assertEquals(Display.Brightness(15, 15), options.brightness,
+            "The single surface must retain its light level in a dark cave")
     }
 
     private enum class CameraMode { FIRST_PERSON, REAR_THIRD_PERSON, FRONT_THIRD_PERSON }
@@ -57,14 +61,18 @@ class TeamNameplateLayoutTest {
         )
     }
 
-    private fun screenUp(row: Float, camera: Quaternionf): Float {
-        // All rows now start at the same WORLD anchor; their displacement rotates only after it.
+    private fun screenUp(fontY: Float, lineCount: Int, camera: Quaternionf): Float {
+        val options = teamNameplateOptions()
+        val localY = options.verticalOffset + (lineCount * LINE_STRIDE - 1 - fontY) * FONT_PIXEL * options.scale
+        // Every row belongs to this one billboard transform and head-relative world anchor.
+        // This is a source geometry guard, not observation of the native client or its motion.
         val anchor = Vector3f(12F, 65.8F + 0.5F, -4F)
-        val point = camera.transform(Vector3f(0F, row, 0F)).add(anchor)
+        val point = camera.transform(Vector3f(0F, localY, 0F)).add(anchor)
         return Quaternionf(camera).conjugate().transform(point.sub(anchor)).y
     }
 
     private companion object {
         const val FONT_PIXEL = 0.025F
+        const val LINE_STRIDE = 10
     }
 }
