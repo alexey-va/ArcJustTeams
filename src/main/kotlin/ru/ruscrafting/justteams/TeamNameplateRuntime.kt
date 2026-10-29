@@ -46,7 +46,7 @@ internal class TeamNameplateRuntime(
     private val policy = TeamPvpPolicy(pvpCheck)
     private val packets = PaperPacketDisplays(plugin, "clan-nameplates", nativeWork)
     private val options = teamNameplateOptions()
-    private val displays = TeamNameplateDisplayReadiness(PacketPaperNameplateDisplayFactory.atNativeNameTag(packets, options))
+    private val displays = TeamNameplateDisplayReadiness(PacketPaperNameplateDisplayFactory.attachedIdentity(packets, options))
     private val nativeVisibility = NativePaperNameplateVisibilityPolicy(options)
     private var renderer: PaperPlayerNameplates? = null
     private var refresh: CompletableFuture<Unit>? = null
@@ -60,7 +60,7 @@ internal class TeamNameplateRuntime(
             val visibility = PaperNameplateVisibilityPolicy { viewer, target ->
                 nativeVisibility.canView(viewer, target) && mayShowOrdinaryNameplate(plugin, target)
             }
-            // One multiline surface follows the head with retained IDs and one-tick interpolation.
+            // One multiline passenger follows the client's player pose without independent teleports.
             renderer = PaperPlayerNameplates.openViewerScoped(
                 plugin, registry, options, scheduler, displays, visibility,
                 PaperNameplateViewerContent { viewer, target, common -> rows.forViewer(viewer, common, policy.evaluate(viewer, target)) },
@@ -230,8 +230,8 @@ internal fun mayShowOrdinaryNameplate(plugin: Plugin, target: Player): Boolean {
 
 /**
  * Pinned 1.21.11 TextDisplay rows advance 10 font pixels (font height 9 + 1).
- * The whole surface rises from its local origin: head + 0.5 world-up, then -0.2 camera-up.
- * Its bottom clears the projected head origin by 0.3 blocks flat, or 0.15 at 45 degrees.
+ * The whole surface rises from its native passenger origin, 0.3 camera-up above the head.
+ * The client keeps that clearance through movement, stance and camera-pitch changes.
  */
 internal fun teamNameplateOptions(): PaperNameplateOptions = PaperNameplateOptions(
     reconcilePeriodTicks = 4L,
@@ -239,7 +239,7 @@ internal fun teamNameplateOptions(): PaperNameplateOptions = PaperNameplateOptio
     lineWidth = 256,
     viewRange = 0.5F,
     scale = 0.8F,
-    verticalOffset = -0.2F,
+    verticalOffset = 0.3F,
     shadowed = true,
     backgroundColor = Color.fromARGB(80, 11, 15, 18),
     hideInvisibleTargets = true,

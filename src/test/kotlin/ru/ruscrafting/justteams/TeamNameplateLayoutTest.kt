@@ -3,7 +3,6 @@ package ru.ruscrafting.justteams
 import org.bukkit.entity.Display
 import org.joml.Quaternionf
 import org.joml.Vector3f
-import kotlin.math.cos
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -39,11 +38,20 @@ class TeamNameplateLayoutTest {
     }
 
     @Test
-    fun `whole plate clears the head at ordinary angles and remains lit in darkness`() {
+    fun `passenger plate clears standing crouching and swimming heads at every camera angle`() {
         val options = teamNameplateOptions()
-        for (pitch in listOf(-45.0, -30.0, 0.0, 30.0, 45.0)) {
-            val projectedHeadClearance = 0.5 * cos(Math.toRadians(pitch)) + options.verticalOffset
-            assertTrue(projectedHeadClearance > 0.15, "pitch=$pitch lower background clears head origin")
+        assertEquals(0.3F, options.verticalOffset)
+        for (height in listOf(1.8F, 1.5F, 0.6F)) {
+            val head = Vector3f(12F, 64F + height, -4F)
+            for (mode in CameraMode.entries) {
+                for (pitch in listOf(-75F, -45F, 0F, 45F, 75F)) {
+                    val camera = cameraRotation(mode, 73F, pitch)
+                    val bottom = camera.transform(Vector3f(0F, options.verticalOffset, 0F)).add(head)
+                    val projected = Quaternionf(camera).conjugate().transform(bottom.sub(head))
+                    assertEquals(0.3F, projected.y, 0.0001F, "$mode height=$height pitch=$pitch")
+                    assertEquals(0F, projected.x, 0.0001F)
+                }
+            }
         }
         assertTrue(options.shadowed)
         assertEquals(Display.Brightness(15, 15), options.brightness,
@@ -66,7 +74,7 @@ class TeamNameplateLayoutTest {
         val localY = options.verticalOffset + (lineCount * LINE_STRIDE - 1 - fontY) * FONT_PIXEL * options.scale
         // Every row belongs to this one billboard transform and head-relative world anchor.
         // This is a source geometry guard, not observation of the native client or its motion.
-        val anchor = Vector3f(12F, 65.8F + 0.5F, -4F)
+        val anchor = Vector3f(12F, 65.8F, -4F)
         val point = camera.transform(Vector3f(0F, localY, 0F)).add(anchor)
         return Quaternionf(camera).conjugate().transform(point.sub(anchor)).y
     }
