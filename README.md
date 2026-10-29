@@ -22,11 +22,11 @@ remain available. There is no plugin reload command; apply file changes with the
 next server restart.
 
 Build with `../ArcGiveaways/gradlew check`. The shaded plugin is written to
-`build/libs/ArcJustTeams-0.3.25.jar`. Delayed post-action refreshes are bound to
+`build/libs/ArcJustTeams-0.3.26.jar`. Delayed post-action refreshes are bound to
 the current native-dialog visit and are ignored after navigation or dismissal;
 ordinary internal transitions keep the dialog window open.
 
-Nameplates require ArcCore with the `ArcNameplateClaim` API (core 2.7.73,
+Nameplates bundle core 2.7.76 and require ArcCore with the `ArcNameplateClaim` API (
 ArcCore 0.1.24) and PacketEvents. ArcEvents 0.5.28 publishes exclusive ownership
 for participants, escrow recovery and preparing phases. Known native world/protection
 denials are shown per viewer. The optional
@@ -39,6 +39,11 @@ and ? when the ARC query is unavailable. Other combat listeners may still veto
 a hit; the icon reflects the native and ARC checks. Native nickname/role/AFK
 remain in TAB; the ops rollout removes duplicate tag/HP prefixes only when the
 new renderer is active. Source-backed previews do not establish client appearance.
+
+Extra rows follow the native nickname's world anchor with one-tick position
+interpolation. Their local spacing then stays in the nickname's camera plane;
+the clan and compact health row use full text brightness and shadows. This
+follower does not inherit passenger movement prediction.
 
 Buff details and controls use the unchanged native pool and prices. The addon
 reflects into the verified justTeams 2.8.1 headless native action; it never

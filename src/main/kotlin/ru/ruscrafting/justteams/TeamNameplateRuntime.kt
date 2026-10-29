@@ -1,6 +1,7 @@
 package ru.ruscrafting.justteams
 
 import org.bukkit.Color
+import org.bukkit.entity.Display
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
 import org.bukkit.event.EventPriority
@@ -56,13 +57,13 @@ internal class TeamNameplateRuntime(
             val visibility = PaperNameplateVisibilityPolicy { viewer, target ->
                 nativeVisibility.canView(viewer, target) && mayShowOrdinaryNameplate(plugin, target)
             }
-            // Both lanes share one packet owner so their passenger IDs are sent together.
+            // Retained display IDs follow the native nickname's world anchor with one-tick interpolation.
             clanRenderer = PaperPlayerNameplates.openViewerScoped(
-                plugin, clanRegistry, clanOptions, scheduler, PacketPaperNameplateDisplayFactory(packets, clanOptions), visibility,
+                plugin, clanRegistry, clanOptions, scheduler, PacketPaperNameplateDisplayFactory.atNativeNameTag(packets, clanOptions), visibility,
                 PaperNameplateViewerContent { _, _, common -> common },
             )
             healthRenderer = PaperPlayerNameplates.openViewerScoped(
-                plugin, healthRegistry, healthOptions, scheduler, PacketPaperNameplateDisplayFactory(packets, healthOptions), visibility,
+                plugin, healthRegistry, healthOptions, scheduler, PacketPaperNameplateDisplayFactory.atNativeNameTag(packets, healthOptions), visibility,
                 PaperNameplateViewerContent { viewer, target, common -> rows.forViewer(viewer, common, policy.evaluate(viewer, target)) },
             )
             plugin.server.pluginManager.registerEvents(this, plugin)
@@ -147,22 +148,26 @@ internal fun mayShowOrdinaryNameplate(plugin: Plugin, target: Player): Boolean {
     return claims.none { it.provider.owns(target.uniqueId) }
 }
 
-/** Separate lanes leave the vanilla/TAB nickname between the clan and health rows. */
-internal fun clanNameplateOptions(): PaperNameplateOptions = nameplateOptions(0.55F)
+/** Camera-plane rows around the unchanged native/TAB nickname, anchored at player head + 0.5. */
+internal fun clanNameplateOptions(): PaperNameplateOptions = nameplateOptions(0.1F, 0.8F)
 
-internal fun healthNameplateOptions(): PaperNameplateOptions = nameplateOptions(0.12F)
+internal fun healthNameplateOptions(): PaperNameplateOptions = nameplateOptions(-0.415F, 0.65F)
 
-/** Shared passenger-local geometry for runtime rendering and the source-driven preview. */
-private fun nameplateOptions(verticalOffset: Float): PaperNameplateOptions = PaperNameplateOptions(
+/**
+ * Pinned 1.21.11: native text background is [-9, 1] * 0.025 in camera-up coordinates;
+ * one-line TextDisplay background is [0, 10] * 0.025 * scale above its local origin.
+ */
+private fun nameplateOptions(verticalOffset: Float, scale: Float): PaperNameplateOptions = PaperNameplateOptions(
     reconcilePeriodTicks = 4L,
     maxDistance = 32.0,
     lineWidth = 256,
     viewRange = 0.5F,
-    scale = 0.8F,
+    scale = scale,
     verticalOffset = verticalOffset,
-    shadowed = false,
+    shadowed = true,
     backgroundColor = Color.fromARGB(80, 11, 15, 18),
     hideInvisibleTargets = true,
     hideSpectatorTargets = true,
     requireLineOfSight = true,
+    brightness = Display.Brightness(15, 15),
 )

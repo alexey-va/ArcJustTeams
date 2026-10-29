@@ -43,8 +43,6 @@ class TeamNameplateIntegrationTest {
             val visibility = PaperNameplateVisibilityPolicy { viewer, subject -> viewer != subject && mayShowOrdinaryNameplate(plugin, subject) }
             val clanOptions = clanNameplateOptions()
             val healthOptions = healthNameplateOptions()
-            assertTrue(clanOptions.verticalOffset > healthOptions.verticalOffset + 0.4F,
-                "The native nickname has a gap between the upper clan and lower health lanes")
             PaperPlayerNameplates.openViewerScoped(
                 plugin, clanRegistry, clanOptions, scheduler, clanDisplays, visibility,
                 PaperNameplateViewerContent { _, _, common -> common },
@@ -107,8 +105,9 @@ class TeamNameplateIntegrationTest {
             "$name\t$encoded\t${PlainTextComponentSerializer.plainText().serialize(component).replace('\n', '|')}"
         })
         val options = clanNameplateOptions()
+        val healthOptions = healthNameplateOptions()
         Files.writeString(directory.resolve("geometry.tsv"),
-            "scale\t${options.scale}\nclan-vertical-offset\t${options.verticalOffset}\nhealth-vertical-offset\t${healthNameplateOptions().verticalOffset}\nline-width\t${options.lineWidth}\nbackground-argb\t${options.backgroundColor.asARGB()}")
+            "anchor\tnative-name-tag\nworld-anchor-above-head\t0.5\nclan-scale\t${options.scale}\nhealth-scale\t${healthOptions.scale}\nclan-vertical-offset\t${options.verticalOffset}\nhealth-vertical-offset\t${healthOptions.verticalOffset}\nline-width\t${options.lineWidth}\nbackground-argb\t${options.backgroundColor.asARGB()}\nshadowed\t${options.shadowed}\nblock-light\t${options.brightness?.blockLight}\nsky-light\t${options.brightness?.skyLight}")
     }
 
     private fun plain(component: Component) = PlainTextComponentSerializer.plainText().serialize(component)
