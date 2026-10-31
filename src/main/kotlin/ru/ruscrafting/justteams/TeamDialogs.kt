@@ -1006,7 +1006,7 @@ internal class TeamDialogs(
     private fun stateKey(enabled: Boolean) = if (enabled) "state.on" else "state.off"
     private fun upgradeCost(player: Player, upgrade: TeamUpgradeSnapshot): Component {
         val parts = buildList {
-            if (upgrade.moneyCost > 0) add(value("${numbers.format(upgrade.moneyCost)} 💰"))
+            if (upgrade.moneyCost > 0) add(value("${numbers.format(upgrade.moneyCost)}💰"))
             if (upgrade.pointsCost > 0) add(texts.get(player, "upgrades.points-value", mapOf("points" to numbers.format(upgrade.pointsCost))))
         }
         return if (parts.isEmpty()) texts.get(player, "upgrades.free")
