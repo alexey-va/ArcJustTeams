@@ -1,6 +1,7 @@
 package ru.ruscrafting.justteams
 
 import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.minimessage.MiniMessage
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
 import org.bukkit.plugin.ServicePriority
@@ -35,7 +36,7 @@ class TeamNameplateIntegrationTest {
             val team = TeamNameplateTeam(10, "tufix", false, emptySet())
             val protections = mutableMapOf(clanmate.uniqueId to TeamPvpState.CLAN, stranger.uniqueId to TeamPvpState.ALLOWED)
             val rows = TeamNameplateRows(Texts(plugin)) {
-                TeamNameplateIdentity(Component.text("\uE29C"), Component.text(it.name))
+                TeamNameplateIdentity(Component.text("\uE29C", NamedTextColor.WHITE), Component.text(it.name, NamedTextColor.WHITE))
             }
             val registry = PlayerNameplateRegistry(512, 3, 160)
             rows.common(target, team).forEach { registry.upsert(target.uniqueId, it) }
