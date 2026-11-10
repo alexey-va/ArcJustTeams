@@ -10,7 +10,7 @@ import kotlin.test.assertEquals
 
 class TeamNameplateRowsTest {
     @Test
-    fun `one plate orders rank clan real nickname and viewer scoped PvP without AFK`() {
+    fun `three rows keep rank above clan and real nickname and viewer scoped PvP below`() {
         MockBukkitTestRuntime.open().use { paper ->
             val plugin = paper.createSimplePlugin("ArcJustTeamsRows")
             plugin.saveDefaultConfig()
@@ -24,16 +24,16 @@ class TeamNameplateRowsTest {
             }
             val team = TeamNameplateTeam(1, "<red>TAG", false, emptySet())
             val commonRows = rows.common(target, team)
-            val registry = PlayerNameplateRegistry(1, 4, 160)
+            val registry = PlayerNameplateRegistry(1, 3, 160)
             commonRows.reversed().forEach { registry.upsert(target.uniqueId, it) }
             val common = checkNotNull(registry.snapshot(target.uniqueId)).content
 
-            assertEquals(listOf(TeamNameplateRows.RANK, TeamNameplateRows.CLAN, TeamNameplateRows.IDENTITY, TeamNameplateRows.HEALTH),
+            assertEquals(listOf(TeamNameplateRows.RANK, TeamNameplateRows.IDENTITY, TeamNameplateRows.HEALTH),
                 checkNotNull(registry.snapshot(target.uniqueId)).layers.map { it.key })
             assertEquals(rank, commonRows.single { it.key == TeamNameplateRows.RANK }.content)
-            assertEquals("[<red>TAG]", plain(commonRows.single { it.key == TeamNameplateRows.CLAN }.content),
-                "A team tag must remain literal text in its own upper row")
-            assertEquals("\uE5A7\n[<red>TAG]\nTarget\n19/20 ❤", plain(common))
+            assertEquals("[<red>TAG] Target", plain(commonRows.single { it.key == TeamNameplateRows.IDENTITY }.content),
+                "A team tag must remain literal text before the real nickname on the same row")
+            assertEquals("\uE5A7\n[<red>TAG] Target\n19/20 ❤", plain(common))
             val pvpIcons = mapOf(
                 TeamPvpState.ALLOWED to "⚔",
                 TeamPvpState.WORLD to "⛨",
@@ -47,7 +47,7 @@ class TeamNameplateRowsTest {
                 plugin.config.set("locale.default", locale)
                 for ((state, icon) in pvpIcons) {
                     val content = rows.forViewer(viewer, common, state)
-                    assertEquals("\uE5A7\n[<red>TAG]\nTarget\n19/20 ❤ · $icon", plain(content),
+                    assertEquals("\uE5A7\n[<red>TAG] Target\n19/20 ❤ · $icon", plain(content),
                         "$locale/$state must append one icon without PvP prose or an extra row")
                     val color = when (state) {
                         TeamPvpState.ALLOWED -> 0xff6b61
@@ -76,7 +76,7 @@ class TeamNameplateRowsTest {
                 TeamNameplateIdentity(Component.text("RANK\n"), Component.text(it.name))
             }.common(target, TeamNameplateTeam(1, "A\nB", false, emptySet()))
             assertEquals("RANK ", plain(rows.first().content))
-            assertEquals("[AB]", plain(rows.single { it.key == TeamNameplateRows.CLAN }.content))
+            assertEquals("[AB] Target", plain(rows.single { it.key == TeamNameplateRows.IDENTITY }.content))
             assertEquals("20/20 ❤ +4", plain(rows.last().content))
         }
     }

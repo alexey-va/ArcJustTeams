@@ -41,7 +41,7 @@ internal class TeamNameplateRuntime(
     identity: (Player) -> TeamNameplateIdentity,
 ) : AutoCloseable, Listener {
     private val tasks = LifecycleTaskScope(scheduler)
-    private val registry = PlayerNameplateRegistry(MAX_TARGETS, 4, 160)
+    private val registry = PlayerNameplateRegistry(MAX_TARGETS, 3, 160)
     private val rows = TeamNameplateRows(texts, identity)
     private val policy = TeamPvpPolicy(pvpCheck)
     private val packets = PaperPacketDisplays(plugin, "clan-nameplates", nativeWork)
@@ -99,7 +99,6 @@ internal class TeamNameplateRuntime(
             if (player.isOnline) {
                 try {
                     val current = rows.common(player, teams.nameplateTeam(player.uniqueId))
-                    if (current.none { it.key == TeamNameplateRows.CLAN }) registry.remove(player.uniqueId, TeamNameplateRows.CLAN)
                     if (current.none { it.key == TeamNameplateRows.RANK }) registry.remove(player.uniqueId, TeamNameplateRows.RANK)
                     current.forEach { row ->
                         val result = registry.upsert(player.uniqueId, row)

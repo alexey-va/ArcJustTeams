@@ -10,17 +10,18 @@ import ru.arc.nameplate.NameplateLayerKey
 import java.util.regex.Pattern
 import kotlin.math.ceil
 
-/** One multiline plate contains rank, optional clan, real nickname and observer-specific health/PvP. */
+/** One multiline plate contains rank, clan plus real nickname, and observer-specific health/PvP. */
 internal class TeamNameplateRows(private val texts: Texts, private val identity: (Player) -> TeamNameplateIdentity) {
     fun common(target: Player, team: TeamNameplateTeam?): List<NameplateLayer> = buildList {
         val playerIdentity = identity(target)
         val rank = singleLine(playerIdentity.rank)
         if (plainText.serialize(rank).isNotBlank()) add(NameplateLayer(RANK, 400, rank))
         val tag = team?.tag?.filterNot(Char::isISOControl)?.trim()?.take(64).orEmpty()
-        if (tag.isNotEmpty()) {
-            add(NameplateLayer(CLAN, 300, singleLine(texts.get(target, "nameplate.clan", mapOf("tag" to tag)))))
-        }
-        add(NameplateLayer(IDENTITY, 200, singleLine(playerIdentity.name)))
+        val name = if (tag.isEmpty()) playerIdentity.name else Component.empty()
+            .append(texts.get(target, "nameplate.clan", mapOf("tag" to tag)))
+            .append(Component.space())
+            .append(playerIdentity.name)
+        add(NameplateLayer(IDENTITY, 200, singleLine(name)))
         val maximum = target.getAttribute(Attribute.MAX_HEALTH)?.value ?: target.health.coerceAtLeast(20.0)
         val absorption = wholeHealth(target.absorptionAmount)
         add(NameplateLayer(HEALTH, 100, singleLine(texts.get(
@@ -37,7 +38,6 @@ internal class TeamNameplateRows(private val texts: Texts, private val identity:
     companion object {
         const val OWNER = "arcjustteams"
         val RANK = NameplateLayerKey(OWNER, "rank")
-        val CLAN = NameplateLayerKey(OWNER, "clan")
         val IDENTITY = NameplateLayerKey(OWNER, "identity")
         val HEALTH = NameplateLayerKey(OWNER, "health")
         private val plainText = PlainTextComponentSerializer.plainText()

@@ -29,15 +29,15 @@ class TeamNameplateIntegrationTest {
         MockBukkitTestRuntime.open().use { paper ->
             val plugin = paper.createSimplePlugin("ArcJustTeamsIntegration")
             plugin.saveDefaultConfig()
-            val target = paper.addPlayer("Alexey23")
+            val target = paper.addPlayer("Atyamova")
             val clanmate = paper.addPlayer("Clanmate")
             val stranger = paper.addPlayer("Stranger")
-            val team = TeamNameplateTeam(10, "RUS", false, emptySet())
+            val team = TeamNameplateTeam(10, "tufix", false, emptySet())
             val protections = mutableMapOf(clanmate.uniqueId to TeamPvpState.CLAN, stranger.uniqueId to TeamPvpState.ALLOWED)
             val rows = TeamNameplateRows(Texts(plugin)) {
-                TeamNameplateIdentity(Component.text("\uE5A7"), Component.text(it.name))
+                TeamNameplateIdentity(Component.text("\uE29C"), Component.text(it.name))
             }
-            val registry = PlayerNameplateRegistry(512, 4, 160)
+            val registry = PlayerNameplateRegistry(512, 3, 160)
             rows.common(target, team).forEach { registry.upsert(target.uniqueId, it) }
             val displays = RecordingPaperNameplateDisplayFactory()
             val readiness = TeamNameplateDisplayReadiness(displays)
@@ -60,8 +60,8 @@ class TeamNameplateIntegrationTest {
                 assertFalse(protectedPlate === allowedPlate)
                 assertEquals(setOf(clanmate.uniqueId), protectedPlate.shownTo)
                 assertEquals(setOf(stranger.uniqueId), allowedPlate.shownTo)
-                assertEquals("\uE5A7\n[RUS]\nAlexey23\n20/20 ❤ · ⛨", plain(protectedPlate.contents.last()))
-                assertEquals("\uE5A7\n[RUS]\nAlexey23\n20/20 ❤ · ⚔", plain(allowedPlate.contents.last()))
+                assertEquals("\uE29C\n[tufix] Atyamova\n20/20 ❤ · ⛨", plain(protectedPlate.contents.last()))
+                assertEquals("\uE29C\n[tufix] Atyamova\n20/20 ❤ · ⚔", plain(allowedPlate.contents.last()))
                 assertEquals(2, renderer.activeDisplayCount,
                     "Two content variants exist, but each viewer sees exactly one complete display")
                 exportPreview(mapOf("plate-protected" to protectedPlate.contents.last(),
@@ -75,11 +75,10 @@ class TeamNameplateIntegrationTest {
                 assertTrue(allowedPlate.closed)
                 assertTrue(readiness.ownsIdentity(target.uniqueId), "Retiring one variant must retain ownership of the shown variant")
 
-                registry.remove(target.uniqueId, TeamNameplateRows.CLAN)
                 rows.common(target, null).forEach { registry.upsert(target.uniqueId, it) }
                 renderer.refreshNow()
                 assertEquals(1, renderer.activeDisplayCount)
-                assertEquals("\uE5A7\nAlexey23\n20/20 ❤ · ⛨", plain(displays.records.single { !it.closed }.contents.last()))
+                assertEquals("\uE29C\nAtyamova\n20/20 ❤ · ⛨", plain(displays.records.single { !it.closed }.contents.last()))
 
                 val events = paper.createSimplePlugin("ArcEvents")
                 val claim = ArcNameplateClaim { it == target.uniqueId }

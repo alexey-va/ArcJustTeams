@@ -46,7 +46,8 @@ previews do not establish client appearance.
 The complete display follows the native nickname's world anchor with one-tick
 position interpolation. Rank, optional clan, nickname and compact health row
 share its camera plane, full text brightness, shadow and background. Rank is
-on its own top row; the lower edge clears the projected head by 0.30 blocks
+on its own top row; the optional clan tag precedes the nickname on the middle
+row, and health/PvP stay on the bottom row. The lower edge clears the projected head by 0.30 blocks
 at a horizontal view. This follower does not inherit passenger movement prediction.
 Identity updates remain active for idle viewers and third-person camera views;
 normal packet budgets and privacy checks still apply.
